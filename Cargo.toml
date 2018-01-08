@@ -1,0 +1,15 @@
+[package]
+name = "crypto_exchanges"
+version = "0.1.0"
+authors = ["Terry Brashaw <terrybrashaw@gmail.com>"]
+
+[dependencies]
+base64 = "*"
+chrono = {version = "*", features = ["serde"]}
+decimal = "*"
+hex = "*"
+ring = "0.11.0"
+serde = "*"
+serde_derive = "*"
+serde_json = "*"
+url = "*"
