@@ -9,4 +9,14 @@ extern crate serde;
 extern crate url;
 
 pub mod gemini;
-// pub mod gdax;
+pub mod gdax;
+
+use url::Url;
+
+pub type Header = (&'static str, String);
+
+#[derive(Clone, Debug, Eq, Hash, PartialEq)]
+pub struct ConnectionInfo {
+    pub address: Url,
+    pub headers: Option<Vec<Header>>,
+}

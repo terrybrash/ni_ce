@@ -6,6 +6,7 @@ use serde_json;
 use std::fmt;
 use std::fmt::Display;
 use url::Url;
+use {ConnectionInfo, Header};
 
 pub fn production() -> Url {
     Url::parse("wss://api.gemini.com").unwrap()
@@ -368,12 +369,6 @@ struct Request<'a> {
     pub nonce: i64,
 }
 
-pub type Header = (&'static str, String);
-
-pub struct ConnectionInfo {
-    pub address: Url,
-    pub headers: Option<Vec<Header>>,
-}
 
 pub fn market_stream<P>(base_address: &Url, product: P) -> ConnectionInfo where P: Into<CurrencyPair> {
     const REQUEST: &'static str = "/v1/marketdata/";

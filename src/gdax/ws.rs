@@ -1,22 +1,28 @@
 use chrono;
 use decimal::d128;
+use url::Url;
+use {ConnectionInfo, Header};
 
-#[derive(Debug, Copy, Clone)]
-pub enum Environment {
-    Production,
-    Sandbox,
+pub fn production() -> Url {
+    Url::parse("wss://ws-feed.gdax.com").unwrap()
 }
 
-impl Environment {
-    fn base_address(&self) -> &'static str {
-        match *self {
-            Environment::Production => "wss://ws-feed.gdax.com",
-            Environment::Sandbox    => "wss://ws-feed-public.sandbox.gdax.com",
-        }
-    }
+pub fn sandbox() -> Url {
+    Url::parse("wss://ws-feed-public.sandbox.gdax.com").unwrap()
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Clone, Debug, Deserialize, Eq, Hash, PartialEq, Serialize, Copy)]
+pub enum CurrencyPair {
+    #[serde(rename="BTC-USD")] BTCUSD,
+    #[serde(rename="BCH-USD")] BCHUSD,
+    #[serde(rename="LTC-USD")] LTCUSD,
+    #[serde(rename="ETH-USD")] ETHUSD,
+    #[serde(rename="BCH-BTC")] BCHBTC,
+    #[serde(rename="LTC-BTC")] LTCBTC,
+    #[serde(rename="ETH-BTC")] ETHBTC,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, Hash, PartialEq, Serialize, Copy)]
 #[serde(rename_all = "lowercase")]
 pub enum ChannelName {
     Level2,
@@ -24,21 +30,21 @@ pub enum ChannelName {
     Ticker,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Clone, Debug, Deserialize, Eq, Hash, PartialEq, Serialize)]
 pub struct Channel {
     pub name: ChannelName,
     #[serde(rename="product_ids")]
     pub products: Vec<CurrencyPair>,
 }
 
-#[derive(Debug, Deserialize, Copy, Clone, PartialEq, Eq)]
+#[derive(Clone, Debug, Deserialize, Eq, Hash, PartialEq, Serialize, Copy)]
 #[serde(rename_all = "lowercase")]
 pub enum Side {
     Buy,
     Sell,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Clone, Debug, Deserialize, Hash, PartialEq, Serialize)]
 #[serde(rename_all = "lowercase", tag="type")]
 pub enum Message {
     Error(Error),
@@ -51,31 +57,31 @@ pub enum Message {
     L2Update(L2Update),
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Clone, Debug, Deserialize, Eq, Hash, PartialEq, Serialize)]
 pub struct Error {
     pub message: String,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Clone, Debug, Deserialize, Eq, Hash, PartialEq, Serialize)]
 pub struct Subscribe {
     #[serde(rename="product_ids")]
     pub products: Vec<CurrencyPair>,
     pub channels: Vec<Channel>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Clone, Debug, Deserialize, Eq, Hash, PartialEq, Serialize)]
 pub struct Subscriptions {
     pub channels: Vec<Channel>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Clone, Debug, Deserialize, Eq, Hash, PartialEq, Serialize)]
 pub struct Unsubscribe {
     #[serde(rename="product_ids")]
     pub products: Option<Vec<CurrencyPair>>,
     pub channels: Vec<ChannelName>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Clone, Debug, Deserialize, Eq, Hash, PartialEq, Serialize)]
 pub struct Heartbeat {
     pub sequence: i64,
     pub last_trade_id: i64,
@@ -84,7 +90,7 @@ pub struct Heartbeat {
     pub time: chrono::DateTime<chrono::Utc>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Clone, Debug, Deserialize, Hash, PartialEq, Serialize)]
 pub struct Ticker {
     pub trade_id: i64,
     pub sequence: i64,
@@ -99,7 +105,7 @@ pub struct Ticker {
     pub best_ask: d128,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Clone, Debug, Deserialize, Hash, PartialEq, Serialize)]
 pub struct Snapshot {
     #[serde(rename="product_id")]
     pub product: CurrencyPair,
@@ -107,7 +113,7 @@ pub struct Snapshot {
     pub asks: Vec<(d128, d128)>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Clone, Debug, Deserialize, Hash, PartialEq, Serialize)]
 pub struct L2Update {
     #[serde(rename="product_id")]
     pub product: CurrencyPair,
@@ -115,15 +121,12 @@ pub struct L2Update {
     pub time: chrono::DateTime<chrono::Utc>,
 }
 
-#[derive(Debug, Deserialize, Copy, Clone)]
-pub enum CurrencyPair {
-    #[serde(rename="BTC-USD")] BTCUSD,
-    #[serde(rename="BCH-USD")] BCHUSD,
-    #[serde(rename="LTC-USD")] LTCUSD,
-    #[serde(rename="ETH-USD")] ETHUSD,
-    #[serde(rename="BCH-BTC")] BCHBTC,
-    #[serde(rename="LTC-BTC")] LTCBTC,
-    #[serde(rename="ETH-BTC")] ETHBTC,
+
+pub fn connect(base_address: Url) -> ConnectionInfo {
+    ConnectionInfo {
+        address: base_address,
+        headers: None,
+    }
 }
 
 // pub fn subscribe(channels: Vec<mpsc::Sender<model::ExchangeUpdate>>, product: model::CurrencyPair) {
