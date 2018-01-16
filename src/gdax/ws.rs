@@ -1,7 +1,6 @@
 use chrono;
 use decimal::d128;
 use url::Url;
-use {ConnectionInfo, Header};
 
 pub fn production() -> Url {
     Url::parse("wss://ws-feed.gdax.com").unwrap()
@@ -13,13 +12,13 @@ pub fn sandbox() -> Url {
 
 #[derive(Clone, Debug, Deserialize, Eq, Hash, PartialEq, Serialize, Copy)]
 pub enum CurrencyPair {
-    #[serde(rename="BTC-USD")] BTCUSD,
-    #[serde(rename="BCH-USD")] BCHUSD,
-    #[serde(rename="LTC-USD")] LTCUSD,
-    #[serde(rename="ETH-USD")] ETHUSD,
-    #[serde(rename="BCH-BTC")] BCHBTC,
-    #[serde(rename="LTC-BTC")] LTCBTC,
-    #[serde(rename="ETH-BTC")] ETHBTC,
+    #[serde(rename = "BTC-USD")] BTCUSD,
+    #[serde(rename = "BCH-USD")] BCHUSD,
+    #[serde(rename = "LTC-USD")] LTCUSD,
+    #[serde(rename = "ETH-USD")] ETHUSD,
+    #[serde(rename = "BCH-BTC")] BCHBTC,
+    #[serde(rename = "LTC-BTC")] LTCBTC,
+    #[serde(rename = "ETH-BTC")] ETHBTC,
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, Hash, PartialEq, Serialize, Copy)]
@@ -33,8 +32,7 @@ pub enum ChannelName {
 #[derive(Clone, Debug, Deserialize, Eq, Hash, PartialEq, Serialize)]
 pub struct Channel {
     pub name: ChannelName,
-    #[serde(rename="product_ids")]
-    pub products: Vec<CurrencyPair>,
+    #[serde(rename = "product_ids")] pub products: Vec<CurrencyPair>,
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, Hash, PartialEq, Serialize, Copy)]
@@ -45,7 +43,7 @@ pub enum Side {
 }
 
 #[derive(Clone, Debug, Deserialize, Hash, PartialEq, Serialize)]
-#[serde(rename_all = "lowercase", tag="type")]
+#[serde(rename_all = "lowercase", tag = "type")]
 pub enum Message {
     Error(Error),
     Subscribe(Subscribe),
@@ -64,8 +62,7 @@ pub struct Error {
 
 #[derive(Clone, Debug, Deserialize, Eq, Hash, PartialEq, Serialize)]
 pub struct Subscribe {
-    #[serde(rename="product_ids")]
-    pub products: Vec<CurrencyPair>,
+    #[serde(rename = "product_ids")] pub products: Vec<CurrencyPair>,
     pub channels: Vec<Channel>,
 }
 
@@ -76,8 +73,7 @@ pub struct Subscriptions {
 
 #[derive(Clone, Debug, Deserialize, Eq, Hash, PartialEq, Serialize)]
 pub struct Unsubscribe {
-    #[serde(rename="product_ids")]
-    pub products: Option<Vec<CurrencyPair>>,
+    #[serde(rename = "product_ids")] pub products: Option<Vec<CurrencyPair>>,
     pub channels: Vec<ChannelName>,
 }
 
@@ -85,8 +81,7 @@ pub struct Unsubscribe {
 pub struct Heartbeat {
     pub sequence: i64,
     pub last_trade_id: i64,
-    #[serde(rename="product_id")]
-    pub product: CurrencyPair,
+    #[serde(rename = "product_id")] pub product: CurrencyPair,
     pub time: chrono::DateTime<chrono::Utc>,
 }
 
@@ -95,11 +90,9 @@ pub struct Ticker {
     pub trade_id: i64,
     pub sequence: i64,
     pub time: chrono::DateTime<chrono::Utc>,
-    #[serde(rename="product_id")]
-    pub product: CurrencyPair,
+    #[serde(rename = "product_id")] pub product: CurrencyPair,
     pub price: d128,
-    #[serde(rename="side")]
-    pub taker_side: Side,
+    #[serde(rename = "side")] pub taker_side: Side,
     pub last_size: d128,
     pub best_bid: d128,
     pub best_ask: d128,
@@ -107,20 +100,17 @@ pub struct Ticker {
 
 #[derive(Clone, Debug, Deserialize, Hash, PartialEq, Serialize)]
 pub struct Snapshot {
-    #[serde(rename="product_id")]
-    pub product: CurrencyPair,
+    #[serde(rename = "product_id")] pub product: CurrencyPair,
     pub bids: Vec<(d128, d128)>,
     pub asks: Vec<(d128, d128)>,
 }
 
 #[derive(Clone, Debug, Deserialize, Hash, PartialEq, Serialize)]
 pub struct L2Update {
-    #[serde(rename="product_id")]
-    pub product: CurrencyPair,
+    #[serde(rename = "product_id")] pub product: CurrencyPair,
     pub changes: Vec<(Side, d128, d128)>,
     pub time: chrono::DateTime<chrono::Utc>,
 }
-
 
 pub fn connect(base_address: Url) -> ConnectionInfo {
     ConnectionInfo {

@@ -6,10 +6,13 @@ authors = ["Terry Brashaw <terrybrashaw@gmail.com>"]
 [dependencies]
 base64 = "*"
 chrono = {version = "*", features = ["serde"]}
-decimal = "*"
+decimal = {git = "https://github.com/terrybrashaw/decimal.git"}
 hex = "*"
-ring = "0.11.0"
+hmac = "*"
+sha2 = "*"
+sha3 = "*"
 serde = "*"
 serde_derive = "*"
 serde_json = "*"
 url = "*"
+# api = "*"
