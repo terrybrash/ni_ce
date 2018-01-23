@@ -1,124 +1,15 @@
-use serde_json;
-use decimal::d128;
+use api::{self, HttpResponse};
+use base64;
 use chrono::DateTime;
 use chrono::Utc;
-use api;
-use std::io::{Read, Cursor};
-use base64;
-use sha2;
+use decimal::d128;
 use hmac::{Hmac, Mac};
-
-// #[derive(Debug, Copy, Clone)]
-// pub enum Environment {
-//     Production,
-//     Sandbox,
-// }
-
-// impl Environment {
-//     fn base_address(&self) -> &'static str {
-//         match *self {
-//             Environment::Production => "https://api.gdax.com",
-//             Environment::Sandbox    => "https://api-public.sandbox.gdax.com",
-//         }
-//     }
-// }
-
-// #[derive(Debug, Deserialize)]
-// pub struct Product {
-//     pub id: String,
-//     pub base_currency: String,
-//     pub quote_currency: String,
-//     pub base_min_size: String,
-//     pub base_max_size: String,
-//     pub quote_increment: String,
-//     pub display_name: String,
-//     pub status: String,
-//     pub margin_enabled: bool,
-//     pub status_message: Option<String>,
-// }
-
-// #[derive(Debug, Deserialize)]
-// pub struct Ticker {
-//     pub trade_id: i64,
-//     pub price: String,
-//     pub size: String,
-//     pub bid: String,
-//     pub ask: String,
-//     pub volume: String,
-//     pub time: String,
-// }
-
-// #[derive(Debug, Deserialize)]
-// pub struct Trade {
-//     pub time: String,
-//     pub trade_id: i64,
-//     pub price: String,
-//     pub size: String,
-//     pub side: String,
-// }
-
-// #[derive(Debug, Deserialize)]
-// pub struct BookLevel1 {
-//     pub sequence: i64,
-//     pub bids: Vec<(String, String, i64)>,
-//     pub asks: Vec<(String, String, i64)>,
-// }
-
-// #[derive(Debug, Deserialize)]
-// pub struct BookLevel2 {
-//     pub sequence: i64,
-//     pub bids: Vec<(String, String, i64)>,
-//     pub asks: Vec<(String, String, i64)>,
-// }
-
-// #[derive(Debug, Deserialize)]
-// pub struct BookLevel3 {
-//     pub sequence: i64,
-//     pub bids: Vec<(String, String, String)>,
-//     pub asks: Vec<(String, String, String)>,
-// }
-
-// #[derive(Debug, Deserialize)]
-// pub struct BidAsk {
-//     pub price: f64,
-//     pub amount: f64,
-// }
-
-// #[derive(Debug, Deserialize)]
-// pub struct Book {
-//     pub bids: Vec<BidAsk>,
-//     pub asks: Vec<BidAsk>,
-// }
-
-// #[derive(Debug, Deserialize)]
-// pub struct Error {
-//     pub message: String,
-// }
-
-// #[derive(Debug, Deserialize)]
-// pub struct Time {
-//     pub iso: String,
-//     pub epoch: f64,
-// }
-
-
-#[derive(Clone, Debug, Deserialize, Eq, Hash, PartialEq, Serialize, Copy)]
-pub enum CurrencyPair {
-    #[serde(rename = "BTC-USD")] BTCUSD,
-    #[serde(rename = "BCH-USD")] BCHUSD,
-    #[serde(rename = "LTC-USD")] LTCUSD,
-    #[serde(rename = "ETH-USD")] ETHUSD,
-    #[serde(rename = "BCH-BTC")] BCHBTC,
-    #[serde(rename = "LTC-BTC")] LTCBTC,
-    #[serde(rename = "ETH-BTC")] ETHBTC,
-}
-
-#[derive(Debug, Copy, Clone, Serialize, Deserialize)]
-#[serde(rename_all="lowercase")]
-pub enum Reason {
-    Filled,
-    Canceled,
-}
+use serde_json;
+use sha2;
+use std::io::{self, Read, Cursor};
+use gdax::{Credential, private_headers, CurrencyPair, Currency, Side};
+use crate as ccex;
+use std::convert::TryFrom;
 
 #[derive(Debug, Copy, Clone, Serialize, Deserialize)]
 pub enum TimeInForce {
@@ -136,6 +27,32 @@ pub enum CancelAfter {
     Day,
 }
 
+impl From<(TimeInForce, Option<CancelAfter>)> for ccex::TimeInForce {
+    fn from(time_in_force: (TimeInForce, Option<CancelAfter>)) -> Self {
+        match time_in_force {
+            (TimeInForce::GoodTillCanceled,  _) => ccex::TimeInForce::GoodTillCancelled,
+            (TimeInForce::FillOrKill,        _) => ccex::TimeInForce::FillOrKill,
+            (TimeInForce::ImmediateOrCancel, _) => ccex::TimeInForce::ImmediateOrCancel,
+            (TimeInForce::GoodTillTime,      Some(cancel_after)) => {
+                match cancel_after {
+                    CancelAfter::Min => ccex::TimeInForce::GoodForMin,
+                    CancelAfter::Hour => ccex::TimeInForce::GoodForHour,
+                    CancelAfter::Day => ccex::TimeInForce::GoodForDay,
+                }
+            }
+            time_in_force => unimplemented!("{:?}", time_in_force)
+        }
+    }
+}
+
+
+#[derive(Debug, Copy, Clone, Serialize, Deserialize)]
+#[serde(rename_all="lowercase")]
+pub enum Reason {
+    Filled,
+    Canceled,
+}
+
 #[derive(Debug, Copy, Clone, Serialize, Deserialize)]
 #[serde(rename_all="lowercase")]
 pub enum OrderStatus {
@@ -144,13 +61,21 @@ pub enum OrderStatus {
     Open,
     Pending,
     Active,
+    Rejected,
 }
 
-#[derive(Debug, Copy, Clone, Serialize, Deserialize)]
-#[serde(rename_all="lowercase")]
-pub enum Side {
-    Buy,
-    Sell,
+impl From<(OrderStatus, Option<Reason>)> for ccex::OrderStatus {
+    fn from(status: (OrderStatus, Option<Reason>)) -> Self {
+        match status {
+            (OrderStatus::Pending, _)                   => ccex::OrderStatus::Pending,
+            (OrderStatus::Done, _)                      => ccex::OrderStatus::Closed("no reason given".to_owned()),
+            (OrderStatus::Done, Some(Reason::Filled))   => ccex::OrderStatus::Filled,
+            (OrderStatus::Done, Some(Reason::Canceled)) => ccex::OrderStatus::Closed("Cancelled".to_owned()),
+            (OrderStatus::Open, _)                      => ccex::OrderStatus::Open,
+            (OrderStatus::Rejected, _)                  => ccex::OrderStatus::Rejected("no reason given".to_owned()),
+            status                                      => unimplemented!("{:?}", status)
+        }
+    }
 }
 
 #[derive(Debug, Copy, Clone, Serialize, Deserialize)]
@@ -169,16 +94,49 @@ pub enum SelfTrade {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all="lowercase", tag="type")]
-pub enum NewOrder {
-    Limit(NewLimitOrder),
-    Market(NewMarketOrder),
-    Stop(NewStopOrder),
+pub enum PlaceOrder {
+    Limit(PlaceLimitOrder),
+    Market(PlaceMarketOrder),
+    Stop(PlaceStopOrder),
+}
+
+impl From<ccex::NewOrder> for PlaceOrder {
+    fn from(order: ccex::NewOrder) -> Self {
+        match order.instruction {
+            ccex::NewOrderInstruction::Limit {price, quantity, time_in_force} => {
+                let (time_in_force, cancel_after) = match time_in_force {
+                    ccex::TimeInForce::GoodTillCancelled    => (TimeInForce::GoodTillCanceled, None),
+                    ccex::TimeInForce::FillOrKill           => (TimeInForce::FillOrKill, None),
+                    ccex::TimeInForce::ImmediateOrCancel    => (TimeInForce::ImmediateOrCancel, None),
+                    ccex::TimeInForce::GoodForDay           => (TimeInForce::GoodTillTime, Some(CancelAfter::Day)),
+                    ccex::TimeInForce::GoodForHour          => (TimeInForce::GoodTillTime, Some(CancelAfter::Hour)),
+                    ccex::TimeInForce::GoodForMin           => (TimeInForce::GoodTillTime, Some(CancelAfter::Min)),
+                    _ => unimplemented!(),
+                };
+
+                let place_limit_order = PlaceLimitOrder {
+                    client_oid: order.id.to_string(),
+                    side: order.side.into(),
+                    product: order.product.into(),
+                    stp: None,
+
+                    price: price,
+                    size: quantity,
+                    time_in_force: Some(time_in_force),
+                    cancel_after: cancel_after,
+                };
+
+                PlaceOrder::Limit(place_limit_order)
+            }
+            _ => unimplemented!(),
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct NewLimitOrder {
+pub struct PlaceLimitOrder {
     /// Order ID selected by you to identify your order
-    pub client_oid: Option<String>,
+    pub client_oid: String,
     pub side: Side,
     #[serde(rename="product_id")]
     pub product: CurrencyPair,
@@ -193,9 +151,9 @@ pub struct NewLimitOrder {
 
 /// One of `size` or `funds` is required
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct NewMarketOrder {
+pub struct PlaceMarketOrder {
     /// Order ID selected by you to identify your order
-    pub client_oid: Option<String>,
+    pub client_oid: String,
     pub side: Side,
     #[serde(rename="product_id")]
     pub product: CurrencyPair,
@@ -207,9 +165,9 @@ pub struct NewMarketOrder {
 
 /// One of `size` or `funds` is required
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct NewStopOrder {
+pub struct PlaceStopOrder {
     /// Order ID selected by you to identify your order
-    pub client_oid: Option<String>,
+    pub client_oid: String,
     pub side: Side,
     #[serde(rename="product_id")]
     pub product: CurrencyPair,
@@ -228,6 +186,31 @@ pub enum Order {
     Stop(StopOrder),
 }
 
+impl TryFrom<Order> for ccex::Order {
+    type Error = String;
+    fn try_from(order: Order) -> Result<Self, Self::Error> {
+        match order {
+            Order::Limit(order)     => {
+                Ok(ccex::Order {
+                    id: None,//order.client_oid.unwrap().parse().unwrap(),
+                    server_id: Some(order.id.parse().unwrap()),
+                    side: order.side.into(),
+                    product: order.product.into(),
+                    status: (order.status, order.done_reason).into(),
+                    instruction: ccex::OrderInstruction::Limit {
+                        price: order.price,
+                        remaining_quantity: order.size - order.executed_value,
+                        original_quantity:  order.size,
+                        time_in_force:      (order.time_in_force, order.cancel_after).into(),
+                    }
+                })
+            },
+            Order::Market(order) => Err(format!("market orders aren't supported")),
+            Order::Stop(order) => Err(format!("stop orders aren't supported")),
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LimitOrder {
     pub id: String,
@@ -241,8 +224,8 @@ pub struct LimitOrder {
     pub created_at: DateTime<Utc>,
     pub filled_size: Option<d128>,
     pub fill_fees: Option<d128>,
-    pub done_at: DateTime<Utc>,
-    pub done_reason: Reason,
+    pub done_at: Option<DateTime<Utc>>,
+    pub done_reason: Option<Reason>,
 
     pub price: d128,
     pub size: d128,
@@ -295,27 +278,43 @@ pub struct StopOrder {
     pub funds: Option<d128>,
 }
 
-type Credential<'a> = (&'a str, &'a str, &'a str);
-
-trait NeedsAuthentication<C>: Sized {
-    fn authenticate(self, credential: C) -> PrivateRequest<Self, C> {
-        PrivateRequest {
-            credential: credential,
-            request: self,
-        }
-    }
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Account {
+    pub id: String,
+    pub currency: Currency,
+    pub balance: d128,
+    pub available: d128,
+    pub hold: d128,
+    pub profile_id: String,
+}
+    
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct ErrorMessage {
+    pub message: String,
 }
 
-pub struct PrivateRequest<R, C> {
-    pub request: R,
-    pub credential: C,
-}
+// #[derive(Fail, Debug, Clone, Serialize, Deserialize)]
+// #[fail(display = "the server returned {}: {}", code, message)]
+// pub struct GdaxError {
+//     pub code: u16,
+//     pub message: String,
+// }
 
-impl<'a> NeedsAuthentication<Credential<'a>> for NewOrder {}
-impl<'a> api::Api for PrivateRequest<NewOrder, Credential<'a>> {
-    type Reply = Order;
-    type Error = serde_json::Error;
-    type Body = Cursor<Vec<u8>>;
+// #[derive(Debug, Fail)]
+// pub enum Error {
+//     SerdeError(serde_json::Error),
+//     #[fail(display = "the server returned {}: {}", code, message)]
+//     BadRequest {
+//         code: u16,
+//         message: String,
+//     }
+// }
+use failure::Error;
+
+impl<'a> api::NeedsAuthentication<&'a Credential> for PlaceOrder {}
+impl<'a> api::RestResource for api::PrivateRequest<PlaceOrder, &'a Credential> {
+    type Response = Order;
+    // type Error = Error;
 
     fn method(&self) -> api::Method {
         api::Method::Post
@@ -325,33 +324,121 @@ impl<'a> api::Api for PrivateRequest<NewOrder, Credential<'a>> {
         format!("/orders")
     }
 
-    fn body(&self) -> Self::Body {
-        Cursor::new(serde_json::to_vec(&self.request).unwrap())
+    fn body(&self) -> Result<Vec<u8>, Error> {
+        println!("{:#?}", self.request);
+        Ok(serde_json::to_vec(&self.request)?)
     }
 
-    fn headers(&self) -> api::Headers {
-        private_headers(self, self.credential)
+    fn headers(&self) -> Result<api::Headers, Error> {
+        Ok(private_headers(self, &self.credential)?)
     }
 
-    fn parse<R>(&self, response: &mut R) -> Result<Self::Reply, Self::Error> where R: api::HttpResponse {
-        serde_json::from_reader(response.body())
+    fn deserialize(&self, response: &HttpResponse) -> Result<Self::Response, Error> {
+        if response.status == 200 {
+            Ok(serde_json::from_slice(&response.body)?)
+        } else {
+            let error: ErrorMessage = serde_json::from_slice(&response.body)?;
+            Err(format_err!("the server returned {}: {}", response.status, error.message))
+        }
     }
 }
 
-// pub fn private_headers(request_path: &str, body: &str, (key, secret, passphrase): Credential) -> api::Headers {
-pub fn private_headers<R>(request: &R, (key, secret, password): Credential) -> api::Headers where R: api::Api {
-    let mut body = String::new();
-    request.body().read_to_string(&mut body).unwrap();
-    let timestamp = Utc::now().timestamp().to_string();
-    let hmac_key = base64::decode(secret).unwrap();
-    let mut signature = Hmac::<sha2::Sha256>::new(&hmac_key).unwrap();
-    signature.input(format!("{}{}{}{}", timestamp, request.method(), request.path(), body).as_bytes());
-    let signature = base64::encode(&signature.result().code());
+#[derive(Default, Debug, Clone, Serialize, Deserialize)]
+pub struct GetOrders;
+impl<'a> api::NeedsAuthentication<&'a Credential> for GetOrders {}
+impl<'a> api::RestResource for api::PrivateRequest<GetOrders, &'a Credential> {
+    type Response = Vec<Order>;
+    // type Error = Error;
 
-    let mut headers = api::Headers::with_capacity(4);
-    headers.insert("CB-ACCESS-KEY".to_owned(), vec![key.to_owned()]);
-    headers.insert("CB-ACCESS-SIGN".to_owned(), vec![signature]);
-    headers.insert("CB-ACCESS-TIMESTAMP".to_owned(), vec![timestamp]);
-    headers.insert("CB-ACCESS-PASSPHRASE".to_owned(), vec![password.to_owned()]);
-    headers
+    fn method(&self) -> api::Method {
+        api::Method::Get
+    }
+
+    fn path(&self) -> String {
+        format!("/orders")
+    }
+
+    fn query(&self) -> api::Query {
+        vec![
+            ("status".to_owned(), "all".to_owned()),
+        ]
+    }
+
+    fn headers(&self) -> Result<api::Headers, Error> {
+        Ok(private_headers(self, &self.credential)?)
+    }
+
+    fn deserialize(&self, response: &HttpResponse) -> Result<Self::Response, Error> {
+        if response.status == 200 {
+            Ok(serde_json::from_slice(&response.body)?)
+        } else {
+            let error: ErrorMessage = serde_json::from_slice(&response.body)?;
+            Err(format_err!("the server returned {}: {}", response.status, error.message))
+        }
+    }
 }
+
+#[derive(Default, Debug, Clone, Serialize, Deserialize)]
+pub struct GetAccounts;
+impl<'a> api::NeedsAuthentication<&'a Credential> for GetAccounts {}
+impl<'a> api::RestResource for api::PrivateRequest<GetAccounts, &'a Credential> {
+    type Response = Vec<Account>;
+    // type Error = Error;
+
+    fn method(&self) -> api::Method {
+        api::Method::Get
+    }
+
+    fn path(&self) -> String {
+        format!("/accounts")
+    }
+
+    fn headers(&self) -> Result<api::Headers, Error> {
+        Ok(private_headers(self, &self.credential)?)
+    }
+
+    fn deserialize(&self, response: &HttpResponse) -> Result<Self::Response, Error> {
+        if response.status == 200 {
+            Ok(serde_json::from_slice(&response.body)?)
+        } else {
+            let error: ErrorMessage = serde_json::from_slice(&response.body)?;
+            Err(format_err!("the server returned {}: {}", response.status, error.message))
+        }
+    }
+}
+
+#[derive(Debug)]
+pub struct CancelOrder<'a> {
+    pub order_id: &'a str,
+}
+impl<'a, 'b> api::NeedsAuthentication<&'a Credential> for CancelOrder<'b> {}
+impl<'a, 'b> api::RestResource for api::PrivateRequest<CancelOrder<'b>, &'a Credential> {
+    type Response = Order;
+    // type Error = Error;
+
+    fn method(&self) -> api::Method {
+        api::Method::Delete
+    }
+
+    fn path(&self) -> String {
+        format!("/orders/{}", self.request.order_id)
+    }
+
+    fn headers(&self) -> Result<api::Headers, Error> {
+        Ok(private_headers(self, &self.credential)?)
+    }
+
+    fn deserialize(&self, response: &HttpResponse) -> Result<Self::Response, Error> {
+        if response.status == 200 {
+            Ok(serde_json::from_slice(&response.body)?)
+        } else {
+            let error: ErrorMessage = serde_json::from_slice(&response.body)?;
+            Err(format_err!("the server returned {}: {}", response.status, error.message))
+        }
+    }
+}
+            // let error = GdaxError {
+            //     code: response.status,
+            //     message: error_message.message,
+            // };
+            // Err(error)?

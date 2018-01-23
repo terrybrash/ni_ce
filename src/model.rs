@@ -1,5 +1,6 @@
 use decimal::d128;
 use std::fmt;
+use uuid::Uuid;
 
 pub type CurrencyPair = (Currency, Currency);
 pub type ID = i64;
@@ -12,6 +13,8 @@ pub enum Currency {
     USD,
     BCH,
     LTC,
+    GBP,
+    EUR,
 }
 
 impl fmt::Display for Currency {
@@ -35,33 +38,150 @@ impl fmt::Display for Environment {
 #[derive(Debug, Hash, PartialEq, Clone, Serialize, Deserialize)]
 pub struct Balance {
     pub currency: Currency,
-    pub supply: d128,
+    pub balance: d128,
 }
 
 #[derive(Debug, Hash, PartialEq, Clone, Serialize, Deserialize)]
 pub struct Trade {
     pub maker_side: Side,
     pub price: d128,
-    pub supply: d128,
+    pub quantity: d128,
 }
 
 #[derive(Debug, Hash, PartialEq, Clone, Serialize, Deserialize)]
 pub struct NewOrder {
-    pub id: String,
+    pub id: Uuid,
     pub side: Side,
     pub product: CurrencyPair,
-    pub price: d128,
-    pub supply: d128,
+    pub instruction: NewOrderInstruction,
+}
+
+#[derive(Debug, Hash, PartialEq, Clone, Serialize, Deserialize)]
+pub enum NewOrderInstruction {
+    Limit {
+        price: d128,
+        quantity: d128,
+        time_in_force: TimeInForce,
+    }
+}
+
+// Market buy orders are placed in one of two ways for each exchange, 
+// and so they're tricky (impossible?) to implement properly in an
+// abstracted way. This doesn't even matter at the moment because 
+// we should only need Limit orders for arbitrage.
+//
+// Market order examples:
+// Gemini:
+//   Sell 1BTC for CURRENT_PRICE
+//   Buy  1000USD worth of BTC for CURRENT_PRICE
+// Binance: 
+//   Sell 1BTC for CURRENT_PRICE
+//   Buy  1BTC for CURRENT_PRICE
+// GDAX:
+//   Sell 1BTC for CURRENT_PRICE
+//   Buy  1000USD worth of BTC for CURRENT_PRICE
+// Bfinex:
+//   Sell 1BTC for CURRENT_PRICE
+//   Buy  1BTC for CURRENT_PRICE
+//
+// pub struct NewMarketOrder {
+//     pub id: String,
+//     pub side: Side,
+//     pub product: CurrencyPair,
+
+//     pub funds: d128,
+// }
+
+
+#[derive(Debug, Hash, Eq, PartialEq, Copy, Clone, Serialize, Deserialize)]
+pub enum TimeInForce {
+    /// GFD
+    GoodForDay,
+    GoodForHour,
+    GoodForMin,
+
+    /// [GTC](https://en.wikipedia.org/wiki/Good_%27til_cancelled)
+    GoodTillCancelled,
+
+    /// [IOC](https://en.wikipedia.org/wiki/Immediate_or_cancel)
+    ///
+    /// Order must be immediately executed or cancelled. 
+    /// Unlike `FillOrKill`, IOC orders can be partially filled.
+    ImmediateOrCancel,
+
+    /// [FOK](https://en.wikipedia.org/wiki/Fill_or_kill)
+    /// 
+    /// Order must be immediately executed or cancelled.
+    /// Unlike `ImmediateOrCancel`, FOK orders *require* the full quantity to be executed.
+    FillOrKill,
+}
+
+#[derive(Debug, Hash, Eq, PartialEq, Clone, Serialize, Deserialize)]
+pub enum OrderStatus {
+    /// The order is active and can be filled; it also may already be partially
+    /// filled.
+    Open,
+
+    /// The order has been completely filled and closed.
+    Filled,
+
+    /// The order was never `Open`; it was rejected for some specified reason.
+    Rejected(String),
+
+    /// The order was placed but has not yet been opened or rejected.
+    Pending,
+
+    /// The order was previously `Open` and voluntarily or involuntarily
+    /// cancelled before being filled for some specified reason. 
+    Closed(String),
 }
 
 #[derive(Debug, Hash, PartialEq, Clone, Serialize, Deserialize)]
 pub struct Order {
-    pub id: String,
+    pub id: Option<Uuid>,
+    pub server_id: Option<String>,
     pub side: Side,
     pub product: CurrencyPair,
-    pub price: d128,
-    pub original_supply: d128,
-    pub remaining_supply: d128,
+    pub status: OrderStatus,
+    pub instruction: OrderInstruction,
+}
+
+#[derive(Debug, Hash, PartialEq, Clone, Serialize, Deserialize)]
+pub enum OrderInstruction {
+    Limit {
+        price: d128,
+        original_quantity: d128,
+        remaining_quantity: d128,
+        time_in_force: TimeInForce,
+    }
+}
+
+impl From<NewOrder> for Order {
+    fn from(new_order: NewOrder) -> Self {
+        Order {
+            id: Some(new_order.id),
+            server_id: None,
+            side: new_order.side,
+            product: new_order.product,
+            status: OrderStatus::Pending,
+            instruction: new_order.instruction.into(),
+        }
+    }
+}
+
+impl From<NewOrderInstruction> for OrderInstruction {
+    fn from(new_order_instruction: NewOrderInstruction) -> Self {
+        match new_order_instruction {
+            NewOrderInstruction::Limit{price, quantity, time_in_force} => {
+                OrderInstruction::Limit {
+                    price: price,
+                    original_quantity: quantity,
+                    remaining_quantity: quantity,
+                    time_in_force: time_in_force,
+                }
+            }
+        }
+    }
 }
 
 #[derive(Debug, Hash, Eq, PartialEq, Copy, Clone, Serialize, Deserialize)]
@@ -165,6 +285,8 @@ impl Orderbook {
 pub struct Market {
     pub product: CurrencyPair,
     pub orderbook: Orderbook,
+
+    /// Public trades; not specific to any user.
     pub trades: Vec<Trade>,
 }
 
@@ -232,7 +354,7 @@ impl Exchange {
                 self.market_mut(&product).unwrap().trades.push(trade)
             }
             ExchangeEvent::OrderAdded(order) => self.orders.push(order),
-            ExchangeEvent::OrderBooked(order) => self.orders.push(order),
+            ExchangeEvent::OrderOpened(order) => self.orders.push(order),
             ExchangeEvent::OrderFilled(order) => {
                 match self.orders.iter().position(|o| o.id == order.id) {
                     Some(o) => self.orders[o] = order,
@@ -245,6 +367,11 @@ impl Exchange {
                         self.orders.remove(o);
                     }
                     None => panic!(),
+                }
+            }
+            ExchangeEvent::Batch(events) => {
+                for event in events {
+                    self.apply(event)
                 }
             }
             ExchangeEvent::Unimplemented(event) => {}
@@ -300,8 +427,20 @@ pub enum ExchangeEvent {
     OrderbookOfferRemoved(CurrencyPair, Side, Offer),
     TradeExecuted(CurrencyPair, Trade),
     OrderAdded(Order),
-    OrderBooked(Order),
+    OrderOpened(Order),
     OrderFilled(Order),
     OrderClosed(Order),
     Unimplemented(String),
+    Batch(Vec<ExchangeEvent>)
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub enum ExchangeCommand {
+    PlaceOrder(NewOrder),
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub enum ExchangeMessage {
+    Event(ExchangeEvent),
+    Command(ExchangeCommand),
 }

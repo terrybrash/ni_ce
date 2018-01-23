@@ -175,34 +175,17 @@ mod request {
     use gemini;
     use decimal::d128;
     use {Request, Method};
-    use api;
+    use api::{self, HttpResponse};
     use std::io;
     use serde_json;
     use super::model;
     use serde::de::DeserializeOwned;
     use serde::ser::Serialize;
+    use std::fmt;
+    use gemini::Credential;
+    use failure::Error;
 
-    pub type Credential<'a> = (&'a str, &'a str);
-
-    pub struct IncompletePrivateRequest<T> {
-        pub request: T,
-    }
-
-    impl<T> IncompletePrivateRequest<T> {
-        pub fn authenticate<C>(self, credential: C) -> PrivateRequest<T, C> {
-            PrivateRequest {
-                request: self.request,
-                credential: credential,
-            }
-        }
-    }
-
-    struct PrivateRequest<T, C> {
-        pub request: T,
-        pub credential: C,
-    }
-
-    pub trait GeminiRequest {
+    pub trait GeminiRequest: fmt::Debug {
         type Response: DeserializeOwned;
         fn path(&self) -> String;
         fn method(&self) -> api::Method;
@@ -210,10 +193,9 @@ mod request {
 
     /// Generic implementation over any `PrivateRequest<T, _>` where `T: GeminiRequest`.
     /// This is useful because every gemini REST request is mostly similar
-    impl<'a, T> api::Api for PrivateRequest<T, Credential<'a>> where T: GeminiRequest + Serialize {
-        type Reply = T::Response;
-        type Body = io::Empty;
-        type Error = serde_json::Error;
+    impl<'a, T> api::RestResource for api::PrivateRequest<T, &'a Credential> where T: GeminiRequest + Serialize {
+        type Response = T::Response;
+        //type Error = Error;
 
         fn method(&self) -> api::Method {
             self.request.method()
@@ -223,26 +205,20 @@ mod request {
             self.request.path()
         }
 
-        fn headers(&self) -> api::Headers {
-            let (key, secret) = self.credential;
-            gemini::private_headers2(&self.request, key, secret)
+        fn headers(&self) -> Result<api::Headers, Error> {
+            Ok(gemini::private_headers(&self.request, self.credential)?)
         }
 
-        fn body(&self) -> Self::Body {
-            io::empty()
-        }
-
-        fn parse<H>(&self, resp: &mut H) -> Result<Self::Reply, Self::Error> where H: api::HttpResponse {
-            serde_json::from_reader(resp.body())
+        fn deserialize(&self, response: &HttpResponse) -> Result<Self::Response, Error> {
+            Ok(serde_json::from_slice(&response.body)?)
         }
     }
 
     /// Generic implementation for any public gemini REST request.
     /// This is equivalent to the impl for `PrivateRequest<GeminiRequest, _>` but for public requests
-    impl<T> api::Api for T where T: GeminiRequest + Serialize {
-        type Reply = T::Response;
-        type Body = io::Empty;
-        type Error = serde_json::Error;
+    impl<T> api::RestResource for T where T: GeminiRequest + Serialize {
+        type Response = T::Response;
+        //type Error = serde_json::Error;
 
         fn method(&self) -> api::Method {
             (self as &T).method()
@@ -252,26 +228,8 @@ mod request {
             (self as &T).path()
         }
 
-        fn body(&self) -> Self::Body {
-            io::empty()
-        }
-
-        fn parse<H>(&self, resp: &mut H) -> Result<Self::Reply, Self::Error> where H: api::HttpResponse {
-            serde_json::from_reader(resp.body())
-        }
-    }
-
-    /// Retrieves all available symbols for trading
-    #[derive(Debug, Clone)]
-    pub struct Symbols;
-    impl GeminiRequest for Symbols {
-        type Response = Vec<model::Product>;
-        fn method(&self) -> api::Method {
-            api::Method::Get
-        }
-
-        fn path(&self) -> String {
-            format!("/v1/symbols")
+        fn deserialize(&self, response: &HttpResponse) -> Result<Self::Response, Error> {
+            Ok(serde_json::from_slice(&response.body)?)
         }
     }
 
@@ -282,20 +240,12 @@ mod request {
     /// heartbeat section, or manually send the cancel all session orders message.
     ///
     /// [Documentation](https://docs.gemini.com/rest-api/#new-order)
-    pub fn place_new_order(mut order: NewOrder) -> IncompletePrivateRequest<NewOrder> {
-        order.request = Some("/v1/order/new".to_owned());
-        order.ty = Some("exchange limit".to_owned());
-        IncompletePrivateRequest {
-            request: order,
-        }
-    }
-
     #[derive(Debug, Clone, Serialize, Deserialize)]
-    pub struct NewOrder {
+    pub struct PlaceOrder {
         /// The literal string `"/v1/order/new"`
-        pub request: Option<String>,
+        pub request: String,
         /// Only `"exchange limit"` is supported at the moment
-        pub ty: Option<String>,
+        pub ty: String,
         pub client_order_id: String,
         pub symbol: model::Product,
         pub amount: d128,
@@ -304,7 +254,25 @@ mod request {
         pub options: Option<Vec<model::OrderExecutionOption>>,
     }
 
-    impl GeminiRequest for NewOrder {
+    impl PlaceOrder {
+        pub fn new(client_order_id: String, symbol: model::Product, amount: d128, price: d128, side: model::Side, options: Option<Vec<model::OrderExecutionOption>>) -> Self {
+            let request = "/v1/order/new".to_owned();
+            let ty = "exchange limit".to_owned();
+            PlaceOrder {
+                request,
+                ty,
+                client_order_id,
+                symbol,
+                amount,
+                price,
+                side,
+                options,
+            }
+        }
+    }
+
+    impl<'a> api::NeedsAuthentication<&'a Credential> for PlaceOrder {}
+    impl GeminiRequest for PlaceOrder {
         type Response = model::OrderStatus;
 
         fn path(&self) -> String {
@@ -319,25 +287,27 @@ mod request {
 
 
     /// This will cancel an order. If the order is already canceled, the message will succeed but have no effect.
-    pub fn cancel_order(nonce: i64, order_id: i64) -> IncompletePrivateRequest<CancelOrder> {
-        let request = CancelOrder {
-            nonce: nonce,
-            order_id: order_id,
-            request: "/v1/order/cancel".to_owned(),
-        };
-
-        IncompletePrivateRequest {request}
-    }
-
-    #[derive(Debug, Serialize)]
+    #[derive(Clone, Debug, Serialize, Deserialize)]
     pub struct CancelOrder {
-        /// The literal string "/v1/order/cancel"
-        pub request: String,
-        pub nonce: i64,
+        nonce: i64,
         /// The order ID given by /order/new.
-        pub order_id: i64,
+        order_id: i64,
+        /// The literal string "/v1/order/cancel"
+        request: String,
     }
 
+    impl CancelOrder {
+        pub fn new(nonce: i64, order_id: i64) -> Self {
+            let request = "/v1/order/cancel".to_owned();
+            CancelOrder {
+                nonce,
+                order_id,
+                request,
+            }
+        }
+    }
+
+    impl<'a> api::NeedsAuthentication<&'a Credential> for CancelOrder {}
     impl GeminiRequest for CancelOrder {
         type Response = model::OrderStatus;
 
@@ -351,21 +321,18 @@ mod request {
 
     }
 
-    // pub fn balances(nonce: i64) -> IncompletePrivateRequest<Balances> {
-
-    // }
 
     #[derive(Debug)]
-    pub struct Balances {
+    pub struct GetBalances {
         /// The literal string "/v1/balances"
         pub request: String,
         pub nonce: i64,
     }
 
-    // impl<'a> api::Api for Balances<'a> {
-    //     type Reply = Vec<Balance>;
+    // impl<'a> api::RestResource for Balances<'a> {
+    //     type Response = Vec<Balance>;
     //     type Body = io::Empty;
-    //     type Error = serde_json::Error;
+    ////     type Error = serde_json::Error;
 
     //     fn method(&self) -> api::Method {
     //         api::Method::Get
@@ -391,7 +358,7 @@ mod request {
 
     //     fn body(&self) -> Self::Body;
 
-    //     fn parse<R>(&self, response: &mut R) -> Result<Self::Reply, Self::Error> where R: HttpResponse;
+    //     fn parse<R>(&self, response: &mut R) -> Result<Self::Response, Error> where R: HttpResponse;
     // }
 
     #[derive(Debug, Serialize, Deserialize)]
@@ -419,10 +386,10 @@ mod request {
 
 
 
-    // impl api::Api for PrivateRequest<CancelOrder, (String, String)> {
-    //     type Reply = Vec<Balance>;
+    // impl api::RestResource for PrivateRequest<CancelOrder, (String, String)> {
+    //     type Response = Vec<Balance>;
     //     type Body = io::Empty;
-    //     type Error = serde_json::Error;
+    ////     type Error = serde_json::Error;
 
     //     fn method(&self) -> api::Method {
     //         api::Method::Get
@@ -441,7 +408,7 @@ mod request {
     //         io::empty()
     //     }
 
-    //     fn parse<R>(&self, response: &mut R) -> Result<Self::Reply, Self::Error> where R: HttpResponse {
+    //     fn parse<R>(&self, response: &mut R) -> Result<Self::Response, Error> where R: HttpResponse {
     //         serde_json::from_reader(response.body())
     //     }
     // }

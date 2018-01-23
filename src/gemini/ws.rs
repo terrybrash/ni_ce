@@ -1,19 +1,14 @@
 pub mod interface {
     use crate as ccex;
-    use super::model::*;
-    use super::model::order::Response;
+    use super::model;
 
     use url::Url;
     use serde_json;
     use gemini::{private_headers};
     use {Request, Method};
+    use api;
+    use gemini::Credential;
 
-    #[derive(Debug, Serialize)]
-    struct WebsocketConnectionRequest<'a> {
-        pub request: &'a str,
-        pub nonce: i64,
-    }
-    
     impl From<ccex::Environment> for Url {
         fn from(env: ccex::Environment) -> Self {
             match env {
@@ -23,46 +18,100 @@ pub mod interface {
         }
     }
 
-    pub fn market_stream<B, P>(base_address: B, product: P) -> Request
-        where B: Into<Url>,
-              P: Into<CurrencyPair> {
-        const REQUEST: &'static str = "/v1/marketdata/";
-
-        Request {
-            address: base_address.into().join(REQUEST).unwrap().join(&product.into().to_string()).unwrap(),
-            headers: None,
-            method: Method::Get,
-            payload: None,
-        }
+    #[derive(Debug, Clone, Serialize, Deserialize)]
+    pub struct GetMarketStream {
+        pub product: model::CurrencyPair,
     }
 
-    pub fn order_stream<B>(base_address: B, key: &str, secret: &str, nonce: i64) -> Request
-        where B: Into<Url> {
-        const REQUEST: &'static str = "/v1/order/events";
-        
-        let payload = WebsocketConnectionRequest {
-            request: REQUEST,
-            nonce: nonce,
-        };
+    impl api::WebsocketResource for GetMarketStream {
+        type Message = model::market::Response;
+        type Error = serde_json::Error;
 
-        Request {
-            address: base_address.into().join(REQUEST).unwrap(),
-            headers: Some(private_headers(&payload, key, secret)),
-            method: Method::Get,
-            payload: None,
+        fn method(&self) -> api::Method {
+            api::Method::Get
         }
-    }
 
-    pub fn deserialize_retarded_order_response(serialized: String) -> serde_json::Result<Vec<Response>> {
-        // Gemini thinks it's fucking smart to send order responses as either arrays OR objects. So
-        // we have to do this stupid shit
-        let deserialized: serde_json::Value = serde_json::from_str(&serialized)?;
-        match deserialized {
-            values @ serde_json::Value::Array(..) => serde_json::from_value(values),
-            value @ serde_json::Value::Object(..) => {
-                serde_json::from_value(serde_json::Value::Array(vec![value]))
+        fn path(&self) -> String {
+            format!("/v1/marketdata/{}", self.product)
+        }
+
+        fn serialize(message: Self::Message) -> Result<api::WebsocketMessage, Self::Error> {
+            unimplemented!("There shouldn't be any messages sent over the market stream--it's receive only")
+        }
+
+        fn deserialize(message: api::WebsocketMessage) -> Result<Self::Message, Self::Error> {
+            match message {
+                api::WebsocketMessage::Text(message) => serde_json::from_str(&message),
+                _ => unimplemented!(),
             }
-            _ => unimplemented!(),
+        }
+
+    }
+
+    // pub fn market_stream<B, P>(base_address: B, product: P) -> Request
+    //     where B: Into<Url>,
+    //           P: Into<CurrencyPair> {
+    //     const REQUEST: &'static str = "/v1/marketdata/";
+
+    //     Request {
+    //         address: base_address.into().join(REQUEST).unwrap().join(&product.into().to_string()).unwrap(),
+    //         headers: None,
+    //         method: Method::Get,
+    //         payload: None,
+    //     }
+    // }
+
+    #[derive(Debug, Serialize, Deserialize)]
+    pub struct GetOrderStream {
+        pub nonce: i64,
+        pub request: String,
+    }
+
+    impl GetOrderStream {
+        pub fn new(nonce: i64) -> Self {
+            let request = "/v1/order/events".to_owned();
+            GetOrderStream {
+                nonce,
+                request,
+            }
+        }
+    }
+
+    impl<'a> api::NeedsAuthentication<&'a Credential> for GetOrderStream {}
+    impl<'a> api::WebsocketResource for api::PrivateRequest<GetOrderStream, &'a Credential> {
+        type Message = Vec<model::order::Response>;
+        type Error = serde_json::Error;
+
+        fn method(&self) -> api::Method {
+            api::Method::Get
+        }
+
+        fn path(&self) -> String {
+            self.request.request.clone()
+        }
+
+        fn headers(&self) -> api::Headers {
+            private_headers(&self.request, &self.credential).unwrap()
+        }
+
+        fn serialize(message: Self::Message) -> Result<api::WebsocketMessage, Self::Error> {
+            unimplemented!("There shouldn't be any messages sent over the order stream")
+        }
+
+        fn deserialize(message: api::WebsocketMessage) -> Result<Self::Message, Self::Error> {
+            match message {
+                api::WebsocketMessage::Text(message) => {
+                    let deserialized: serde_json::Value = serde_json::from_str(&message)?;
+                    match deserialized {
+                        values @ serde_json::Value::Array(..) => serde_json::from_value(values),
+                        value  @ serde_json::Value::Object(..) => {
+                            serde_json::from_value(serde_json::Value::Array(vec![value]))
+                        }
+                        _ => unimplemented!(),
+                    }
+                }
+                _ => unimplemented!(),
+            }
         }
     }
 }
@@ -359,7 +408,7 @@ pub mod model {
             fn from(trade: Trade) -> Self {
                 ccex::Trade {
                     price: trade.price,
-                    supply: trade.amount,
+                    quantity: trade.amount,
                     maker_side: trade.maker_side.into(),
                 }
             }
@@ -448,7 +497,7 @@ pub mod model {
             fn from(response: Response) -> Self {
                 match response {
                     Response::Initial(order)        => ccex::ExchangeEvent::OrderAdded(order.into()),
-                    Response::Booked(order)         => ccex::ExchangeEvent::OrderBooked(order.into()),
+                    Response::Booked(order)         => ccex::ExchangeEvent::OrderOpened(order.into()),
                     Response::Fill(order)           => ccex::ExchangeEvent::OrderFilled(order.into()),
                     Response::Cancelled(order)      => ccex::ExchangeEvent::OrderClosed(order.into()),
                     Response::Heartbeat{..}         => ccex::ExchangeEvent::Heartbeat,
@@ -537,14 +586,16 @@ pub mod model {
 
         impl From<Order> for ccex::Order {
             fn from(order: Order) -> Self {
-                ccex::Order {
-                    id: order.order_id,
-                    product: order.symbol.into(),
-                    price: order.price.unwrap(),
-                    original_supply: order.original_amount.unwrap(),
-                    remaining_supply: order.remaining_amount.unwrap(),
-                    side: order.side.into(),
-                }
+                // FIXME: convert to new order type
+                unimplemented!()
+                // ccex::Order {
+                //     id: order.order_id,
+                //     product: order.symbol.into(),
+                //     price: order.price.unwrap(),
+                //     original_supply: order.original_amount.unwrap(),
+                //     remaining_supply: order.remaining_amount.unwrap(),
+                //     side: order.side.into(),
+                // }
             }
         }
 

@@ -1,5 +1,9 @@
+#![feature(try_from)]
+#![feature(associated_type_defaults)]
 #![feature(crate_in_paths)]
+#![allow(warnings)]
 
+#[macro_use] extern crate failure;
 #[macro_use] extern crate serde_derive;
 extern crate base64;
 extern crate chrono;
@@ -10,7 +14,9 @@ extern crate serde;
 extern crate serde_json;
 extern crate sha2;
 extern crate url;
-// extern crate api;
+extern crate reqwest;
+extern crate tungstenite;
+extern crate uuid;
 
 pub mod api;
 pub mod gemini;
