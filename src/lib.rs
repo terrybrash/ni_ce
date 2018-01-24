@@ -19,26 +19,27 @@ extern crate tungstenite;
 extern crate uuid;
 
 pub mod api;
-pub mod gemini;
-pub mod gdax;
+// pub mod gemini;
+// pub mod gdax;
+pub mod exmo;
 mod model;
 
 pub use model::*;
 
-use url::Url;
+// use url::Url;
 
-pub type Header = (&'static str, String);
+// pub type Header = (&'static str, String);
 
-#[derive(Clone, Debug, Eq, Hash, PartialEq)]
-pub enum Method {
-	Post,
-	Get,
-}
+// #[derive(Clone, Debug, Eq, Hash, PartialEq)]
+// pub enum Method {
+// 	Post,
+// 	Get,
+// }
 
-#[derive(Clone, Debug, Eq, Hash, PartialEq)]
-pub struct Request {
-    pub address: Url,
-    pub headers: Option<Vec<Header>>,
-    pub method: Method,
-    pub payload: Option<String>,
-}
+// #[derive(Clone, Debug, Eq, Hash, PartialEq)]
+// pub struct Request {
+//     pub address: Url,
+//     pub headers: Option<Vec<Header>>,
+//     pub method: Method,
+//     pub payload: Option<String>,
+// }

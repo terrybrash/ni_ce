@@ -82,6 +82,11 @@ pub enum Message {
     /// new market order goes through self trade prevention and the **funds**
     /// for the market order have changed.
     Change(Order),
+
+    /// An activate message is sent when a stop order is placed. When the stop
+    /// is triggered, the order will be placed and o through the "order
+    /// lifecycle".
+    Activate(Order),
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, Hash, PartialEq, Serialize)]
@@ -90,9 +95,9 @@ pub struct Order {
     order_id: Option<String>,
     time: DateTime<Utc>,
     product_id: CurrencyPair,
-    sequence: i64,
+    sequence: Option<i64>,
     size: Option<d128>,
-    price: d128,
+    price: Option<d128>,
     side: Side,
     order_type: Option<OrderType>,
     

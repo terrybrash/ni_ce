@@ -173,7 +173,7 @@ pub struct HttpResponse {
 }
 
 impl HttpResponse {
-    fn to_string(&self) -> Result<String, FromUtf8Error> {
+    pub fn body_to_string(&self) -> Result<String, FromUtf8Error> {
         String::from_utf8(self.body.clone())
     }
 }
@@ -200,8 +200,12 @@ impl HttpClient for reqwest::Client {
         }
 
         url = url.join(&request.path())?;
-        url.query_pairs_mut().extend_pairs(request.query());
-        
+            
+        let query = request.query();
+        if query.len() > 0 {
+            url.query_pairs_mut().extend_pairs(request.query());
+        }
+
         let response: HttpResponse = 
             self.request(request.method().into(), url)
             .headers(headers)
@@ -210,9 +214,9 @@ impl HttpClient for reqwest::Client {
             .unwrap()
             .into();
 
-        println!("Response");
-        println!("  Code: {}", response.status);
-        println!("  Body: {}", response.to_string().unwrap());
+        // println!("Response");
+        // println!("  Code: {}", response.status);
+        // println!("  Body: {}", response.to_string().unwrap());
         Ok(request.deserialize(&response)?)
     }
 }

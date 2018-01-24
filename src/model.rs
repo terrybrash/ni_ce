@@ -1,6 +1,7 @@
 use decimal::d128;
 use std::fmt;
 use uuid::Uuid;
+use chrono::{DateTime, Utc};
 
 pub type CurrencyPair = (Currency, Currency);
 pub type ID = i64;
@@ -95,6 +96,9 @@ pub enum NewOrderInstruction {
 
 #[derive(Debug, Hash, Eq, PartialEq, Copy, Clone, Serialize, Deserialize)]
 pub enum TimeInForce {
+    /// GTT
+    GoodTillTime(DateTime<Utc>),
+
     /// GFD
     GoodForDay,
     GoodForHour,

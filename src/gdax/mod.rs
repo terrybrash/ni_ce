@@ -116,8 +116,8 @@ impl From<Side> for ccex::Side {
 impl From<ccex::Side> for Side {
     fn from(side: ccex::Side) -> Self {
         match side {
-            ccex::Side::Bid =>  Side::Buy,
-            ccex::Side::Ask =>  Side::Sell,
+            ccex::Side::Bid => Side::Buy,
+            ccex::Side::Ask => Side::Sell,
         }
     }
 }
@@ -133,16 +133,15 @@ where R: api::RestResource {
             String::new()
         }
     };
-    println!("QUERY: \"{}\"", query);
+    
     let body = String::from_utf8(request.body().unwrap())?;
     let timestamp = Utc::now().timestamp().to_string();
     let hmac_key = base64::decode(&credential.secret)?;
     let mut signature = Hmac::<sha2::Sha256>::new(&hmac_key).map_err(|e| format_err!("{:?}", e))?;
-    signature.input(format!("{}{}{}{}", timestamp, request.method(), request.path(), body).as_bytes());
-    // signature.input(format!("{}{}{}{}{}", timestamp, request.method(), request.path(), query, body).as_bytes());
+    signature.input(format!("{}{}{}{}{}", timestamp, request.method(), request.path(), query, body).as_bytes());
     let signature = base64::encode(&signature.result().code());
 
-    let mut headers = api::Headers::with_capacity(4);
+    let mut headers = api::Headers::with_capacity(6);
     headers.insert("Content-Type".to_owned(), "application/json".to_owned());
     headers.insert("CB-ACCESS-KEY".to_owned(), credential.key.clone());
     headers.insert("CB-ACCESS-SIGN".to_owned(), signature);

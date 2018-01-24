@@ -27,20 +27,21 @@ pub enum CancelAfter {
     Day,
 }
 
-impl From<(TimeInForce, Option<CancelAfter>)> for ccex::TimeInForce {
-    fn from(time_in_force: (TimeInForce, Option<CancelAfter>)) -> Self {
+impl From<(TimeInForce, Option<CancelAfter>, Option<String>)> for ccex::TimeInForce {
+    fn from(time_in_force: (TimeInForce, Option<CancelAfter>, Option<String>)) -> Self {
         match time_in_force {
-            (TimeInForce::GoodTillCanceled,  _) => ccex::TimeInForce::GoodTillCancelled,
-            (TimeInForce::FillOrKill,        _) => ccex::TimeInForce::FillOrKill,
-            (TimeInForce::ImmediateOrCancel, _) => ccex::TimeInForce::ImmediateOrCancel,
-            (TimeInForce::GoodTillTime,      Some(cancel_after)) => {
+            (TimeInForce::GoodTillCanceled,     _,                  None) => ccex::TimeInForce::GoodTillCancelled,
+            (TimeInForce::FillOrKill,           _,                  None) => ccex::TimeInForce::FillOrKill,
+            (TimeInForce::ImmediateOrCancel,    _,                  None) => ccex::TimeInForce::ImmediateOrCancel,
+            (TimeInForce::GoodTillTime,         None,               Some(expire_time)) => ccex::TimeInForce::GoodTillCancelled, // FIXME: this should be manually parsed into DateTime<UTC>, expire_time isn't a normal DateTime<UTC> string 
+            (TimeInForce::GoodTillTime,         Some(cancel_after), None) => {
                 match cancel_after {
                     CancelAfter::Min => ccex::TimeInForce::GoodForMin,
                     CancelAfter::Hour => ccex::TimeInForce::GoodForHour,
                     CancelAfter::Day => ccex::TimeInForce::GoodForDay,
                 }
             }
-            time_in_force => unimplemented!("{:?}", time_in_force)
+            time_in_force => unimplemented!("unexpected conversion from {:?}", time_in_force)
         }
     }
 }
@@ -190,9 +191,9 @@ impl TryFrom<Order> for ccex::Order {
     type Error = String;
     fn try_from(order: Order) -> Result<Self, Self::Error> {
         match order {
-            Order::Limit(order)     => {
+            Order::Limit(order) => {
                 Ok(ccex::Order {
-                    id: None,//order.client_oid.unwrap().parse().unwrap(),
+                    id: None,
                     server_id: Some(order.id.parse().unwrap()),
                     side: order.side.into(),
                     product: order.product.into(),
@@ -201,7 +202,7 @@ impl TryFrom<Order> for ccex::Order {
                         price: order.price,
                         remaining_quantity: order.size - order.executed_value,
                         original_quantity:  order.size,
-                        time_in_force:      (order.time_in_force, order.cancel_after).into(),
+                        time_in_force:      (order.time_in_force, order.cancel_after, order.expire_time).into(),
                     }
                 })
             },
@@ -226,6 +227,8 @@ pub struct LimitOrder {
     pub fill_fees: Option<d128>,
     pub done_at: Option<DateTime<Utc>>,
     pub done_reason: Option<Reason>,
+    // pub expire_time: Option<DateTime<Utc>>,
+    pub expire_time: Option<String>,
 
     pub price: d128,
     pub size: d128,
@@ -248,8 +251,10 @@ pub struct MarketOrder {
     pub created_at: DateTime<Utc>,
     pub filled_size: Option<d128>,
     pub fill_fees: Option<d128>,
-    pub done_at: DateTime<Utc>,
-    pub done_reason: Reason,
+    pub done_at: Option<DateTime<Utc>>,
+    pub done_reason: Option<Reason>,
+    // pub expire_time: Option<DateTime<Utc>>,
+    pub expire_time: Option<String>,
 
     pub size: Option<d128>,
     pub funds: Option<d128>,
@@ -270,8 +275,10 @@ pub struct StopOrder {
     pub created_at: DateTime<Utc>,
     pub filled_size: Option<d128>,
     pub fill_fees: Option<d128>,
-    pub done_at: DateTime<Utc>,
-    pub done_reason: Reason,
+    pub done_at: Option<DateTime<Utc>>,
+    pub done_reason: Option<Reason>,
+    // pub expire_time: Option<DateTime<Utc>>,
+    pub expire_time: Option<String>,
 
     pub price: d128,
     pub size: Option<d128>,
@@ -325,7 +332,6 @@ impl<'a> api::RestResource for api::PrivateRequest<PlaceOrder, &'a Credential> {
     }
 
     fn body(&self) -> Result<Vec<u8>, Error> {
-        println!("{:#?}", self.request);
         Ok(serde_json::to_vec(&self.request)?)
     }
 
@@ -369,6 +375,7 @@ impl<'a> api::RestResource for api::PrivateRequest<GetOrders, &'a Credential> {
     }
 
     fn deserialize(&self, response: &HttpResponse) -> Result<Self::Response, Error> {
+        println!("{}", String::from_utf8(response.body.clone()).unwrap());
         if response.status == 200 {
             Ok(serde_json::from_slice(&response.body)?)
         } else {
