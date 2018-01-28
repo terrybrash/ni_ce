@@ -21,10 +21,19 @@ extern crate uuid;
 pub mod api;
 // pub mod gemini;
 // pub mod gdax;
-pub mod exmo;
+pub mod liqui;
 mod model;
+mod status;
 
 pub use model::*;
+
+pub trait RestExchange: std::fmt::Debug {
+    fn place_order(&mut self, order: NewOrder) -> Order;
+    fn balances(&mut self) -> Vec<Balance>;
+    fn orders(&mut self, product: CurrencyPair) -> Vec<Order>;
+    fn orderbook(&mut self, product: CurrencyPair) -> Orderbook;
+    // fn exchange(&mut self) -> MutexGuard<Exchange>;
+}
 
 // use url::Url;
 

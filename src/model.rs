@@ -24,6 +24,21 @@ impl fmt::Display for Currency {
     }
 }
 
+// impl FromStr for Point {
+//     type Err = ParseIntError;
+
+//     fn from_str(s: &str) -> Result<Self, Self::Err> {
+//         let coords: Vec<&str> = s.trim_matches(|p| p == '(' || p == ')' )
+//                                  .split(",")
+//                                  .collect();
+
+//         let x_fromstr = coords[0].parse::<i32>()?;
+//         let y_fromstr = coords[1].parse::<i32>()?;
+
+//         Ok(Point { x: x_fromstr, y: y_fromstr })
+//     }
+// }
+
 #[derive(Debug, Hash, Eq, PartialEq, Copy, Clone, Serialize, Deserialize)]
 pub enum Environment {
     Production,
@@ -40,6 +55,15 @@ impl fmt::Display for Environment {
 pub struct Balance {
     pub currency: Currency,
     pub balance: d128,
+}
+
+impl Balance {
+    pub fn new(currency: Currency, balance: d128) -> Self {
+        Balance {
+            currency,
+            balance,
+        }
+    }
 }
 
 #[derive(Debug, Hash, PartialEq, Clone, Serialize, Deserialize)]
@@ -214,8 +238,8 @@ impl Offer {
 
 #[derive(Debug, Default, Clone, Serialize, Deserialize)]
 pub struct Orderbook {
-    pub bids: Vec<Offer>,
     pub asks: Vec<Offer>,
+    pub bids: Vec<Offer>,
 }
 
 impl Orderbook {

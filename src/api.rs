@@ -1,20 +1,133 @@
 use std::io::{self, Read};
 use std::collections::HashMap;
 use url::Url;
-use std::fmt;
 use std::borrow::Cow;
 use std::io::Cursor;
 use failure::{Fail, Error};
 use std::string::FromUtf8Error; 
+use base64;
+use std::fmt::{self, Display, Formatter};
+use serde::ser::Serialize;
+use status::StatusCode;
 
 use reqwest;
 use tungstenite;
 
-pub type Headers = HashMap<String, String>;
-pub type Query = Vec<(String, String)>;
+// pub type Headers = HashMap<String, String>;
+pub type Headers = Vec<Header>;
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Header {
+    pub name: String,
+    pub values: Vec<String>,
+}
+
+impl Header {
+    pub fn new<N, V>(name: N, value: V) -> Self 
+    where N: Into<String>, V: Into<String> {
+        Header {
+            name: name.into(),
+            values: vec![value.into()],
+        }
+    }
+
+    pub fn from_vec<N, V>(name: N, values: Vec<V>) -> Self 
+    where N: Into<String>, V: Into<String> {
+        Header {
+            name: name.into(),
+            values: values.into_iter().map(Into::into).collect(),
+        }
+    }
+}
+
+impl Display for Header {
+    fn fmt(&self, f: &mut Formatter) -> Result<(), fmt::Error> {
+        write!(f, "{}: {}", self.name, self.values.as_slice().join("; "))
+    }
+}
+
+/// This is a useful abstraction over the blob of bytes that eventually gets
+/// sent out to HTTP calls. It allows passing around the payload as a string
+/// for as long as possible, which is useful in debugging or intermediary
+/// steps that need to work with *strings* and not just binary.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum Payload {
+    Text(String),
+    Binary(Vec<u8>),
+}
+
+impl Payload {
+    pub fn as_bytes(&self) -> &[u8] {
+        match self {
+            &Payload::Text(ref payload) => payload.as_bytes(),
+            &Payload::Binary(ref payload) => payload.as_slice(),
+        }
+    }
+}
+
+impl Display for Payload {
+    fn fmt(&self, f: &mut Formatter) -> Result<(), fmt::Error> {
+        match self {
+            &Payload::Text(ref body) => write!(f, "{}", body),
+            &Payload::Binary(ref body) => write!(f, "(binary) {}", base64::encode(body)),
+        }
+    }
+}
+
+#[derive(Debug, Default, Clone, Serialize, Deserialize)]
+pub struct Query {
+    pub params: Vec<(String, String)>,
+    char_len: usize,
+}
+
+impl Query {
+    pub fn from_vec<K, V>(params: Vec<(K, V)>) -> Self 
+    where K: Into<String>, V: Into<String> {
+        // let char_len = params.iter().fold(0, |acc, &(ref name, ref value)| acc + name.len() + value.len());
+        let char_len = 0;
+        let params = params.into_iter().map(|(k, v)| (k.into(), v.into())).collect();        
+        Query {
+            params,
+            char_len,
+        }
+    }
+
+    pub fn to_string(&self) -> String {
+        if self.params.is_empty() {
+            String::new()
+        } else {
+            let params: Vec<String> = self.params.iter().map(|&(ref name, ref value)| [name.as_str(), value.as_str()].join("=")).collect();
+            let query = ["?", &params.as_slice().join("&")].concat();
+            query
+        }
+    }
+}
+
+#[derive(Debug, Default)]
+pub struct QueryBuilder {
+    params: Vec<(String, String)>,
+}
+
+impl QueryBuilder {
+    pub fn with_capacity(len: usize) -> Self {
+        QueryBuilder {
+            params: Vec::with_capacity(len),
+        }
+    }
+
+    pub fn param<K, V>(mut self, key: K, value: V) -> Self 
+    where K: Into<String>, V: Into<String> {
+        self.params.push((key.into(), value.into()));
+        self
+    }
+
+    pub fn build(mut self) -> Query {
+        Query::from_vec(self.params)
+    }
+}
 
 /// Specifies that a request first needs to be authenticated before becoming a valid request.
-pub trait NeedsAuthentication<C>: Sized + fmt::Debug where C: fmt::Debug {
+pub trait NeedsAuthentication<C>: Serialize + Sized + fmt::Debug where C: fmt::Debug {
     fn authenticate(self, credential: C) -> PrivateRequest<Self, C> {
         PrivateRequest {
             credential: credential,
@@ -25,7 +138,8 @@ pub trait NeedsAuthentication<C>: Sized + fmt::Debug where C: fmt::Debug {
 
 /// Wrapper for requests that require authentication.
 #[derive(Debug)]
-pub struct PrivateRequest<R, C> where R: fmt::Debug, C: fmt::Debug {
+pub struct PrivateRequest<R, C>
+where R: Serialize + fmt::Debug, C: fmt::Debug {
     pub request: R,
     pub credential: C,
 }
@@ -63,22 +177,21 @@ impl fmt::Display for Method {
 
 pub trait RestResource {
     type Response;
-    // type Error: Fail;
 
     fn method(&self) -> Method;
 
     fn path(&self) -> String;
 
     fn query(&self) -> Query {
-        Query::new()
+        Query::default()
     }
 
     fn headers(&self) -> Result<Headers, Error> {
         Ok(Headers::new())
     }
 
-    fn body(&self) -> Result<Vec<u8>, Error> {
-        Ok(Vec::new())
+    fn body(&self) -> Result<Option<Payload>, Error> {
+        Ok(None)
     }
 
     fn deserialize(&self, response: &HttpResponse) -> Result<Self::Response, Error>;
@@ -108,25 +221,11 @@ pub enum WebsocketMessage {
     Pong(Vec<u8>),
 }
 
-// pub trait HttpResponse {
-//     type Body: io::Read;
-
-//     fn status(&self) -> u16;
-
-//     fn reason(&self) -> Option<&str>;
-
-//     fn headers(&self) -> Headers;
-
-//     fn body(&mut self) -> &mut Self::Body;
-// }
-
-pub trait HttpClient {
+pub trait HttpClient: fmt::Debug {
     type Error: fmt::Debug;
 
-    fn send<Request>(&mut self, url: Url, request: Request) -> Result<Request::Response, Self::Error> where Request: RestResource;
+    fn send<Request>(&mut self, url: &Url, request: Request) -> Result<Request::Response, Self::Error> where Request: RestResource;
 }
-
-// --------------------------------------
 
 impl From<Method> for reqwest::Method {
     fn from(method: Method) -> reqwest::Method {
@@ -145,81 +244,131 @@ impl From<Method> for reqwest::Method {
     }
 }
 
-// impl HttpResponse for reqwest::Response {
-//     type Body = Self;
-
-//     fn status(&self) -> u16 {
-//         self.status().as_u16()
-//     }
-
-//     fn reason(&self) -> Option<&str> {
-//         self.status().canonical_reason()
-//     }
-
-//     fn headers(&self) -> Headers {
-//         Headers::new()
-//     }
-
-//     fn body(&mut self) -> &mut Self::Body {
-//         self
-//     }
-// }
-
 #[derive(Debug, Clone)]
 pub struct HttpResponse {
-    pub status: u16,
-    pub body: Vec<u8>,
+    pub status: StatusCode,
+    pub body: Option<Payload>,
     pub headers: Headers,
-}
-
-impl HttpResponse {
-    pub fn body_to_string(&self) -> Result<String, FromUtf8Error> {
-        String::from_utf8(self.body.clone())
-    }
 }
 
 impl From<reqwest::Response> for HttpResponse {
     fn from(mut response: reqwest::Response) -> Self {
         let mut body = Vec::with_capacity(1024);
         response.read_to_end(&mut body).unwrap();
+
+        let body = match body.is_empty() {
+            true => None,
+            false => match String::from_utf8(body) {
+                Ok(body) => Some(Payload::Text(body)),
+                Err(body) => Some(Payload::Binary(body.into_bytes())),
+            },
+        };
+
+        let headers = response.headers().iter().map(|header| {
+            Header::new(header.name(), header.value_string())
+        }).collect();
+
         HttpResponse {
-            status: response.status().as_u16(),
-            headers: Headers::new(),
+            status: StatusCode::try_from(response.status().as_u16()).unwrap(),
+            headers: headers,
             body: body,
         }
     }
 }
 
+impl Display for HttpResponse {
+    fn fmt(&self, f: &mut Formatter) -> Result<(), fmt::Error> {
+        writeln!(f, "{}", self.status)?;
+
+        for header in &self.headers {
+            writeln!(f, "{}", header)?;
+        }
+
+        if let Some(ref body) = self.body {
+            writeln!(f, "Body: {}", body)?;
+        }
+
+        Ok(())
+    }
+}
+
+struct HttpRequest {
+    pub host: Url,
+    pub method: Method,
+    pub body: Option<Payload>,
+    pub headers: Headers,
+    pub url: Url,
+}
+
+impl HttpRequest {
+    pub fn new<Resource>(host: Url, resource: &Resource) -> Result<Self, Error> 
+    where Resource: RestResource {
+        let query = resource.query().to_string();
+        let path = resource.path();
+        let request = HttpRequest {
+            url: host.join(&path)?.join(&query)?,
+            host: host,
+            method: resource.method(),
+            body: resource.body()?,
+            headers: resource.headers()?,
+        };
+        Ok(request)
+    }
+}
+
+impl Display for HttpRequest {
+    fn fmt(&self, f: &mut Formatter) -> Result<(), fmt::Error> {
+        writeln!(f, "{} {}", self.method, self.url)?;
+
+        for header in &self.headers {
+            writeln!(f, "{}", header)?;
+        }
+
+        if let Some(ref body) = self.body {
+            writeln!(f, "Body: {}", body)?;
+        }
+
+        Ok(())
+    }
+}
+
+
+// todo: make an enum for body payloads where the available tags are
+//       Text/Binary/Json and other things (lookup the RFCs)
+// todo: remove HttpRequest and make a Log trait that gets implemented on
+//       reqwest::Request and reqwest::Response.
+// todo: impl common headers in RestResource (like Accept-Encoding)
+
 impl HttpClient for reqwest::Client {
     type Error = Error;
 
-    fn send<Resource>(&mut self, mut url: Url, request: Resource) -> Result<Resource::Response, Self::Error> where Resource: RestResource {
-        let mut headers = reqwest::header::Headers::new();
-        for (name, value) in request.headers()? {
-            headers.set_raw(name.to_owned(), value.to_owned());
+    fn send<Resource>(&mut self, host: &Url, resource: Resource) -> Result<Resource::Response, Self::Error> where Resource: RestResource {
+        let request = HttpRequest::new(host.clone(), &resource)?;
+        println!("{}", request);
+
+        let mut request_builder = self.request(request.method.into(), request.url);
+
+        let mut reqwest_headers = reqwest::header::Headers::new();
+        for header in request.headers {
+            reqwest_headers.set_raw(header.name.clone(), header.values.as_slice().join("; "));
+        }
+        request_builder.headers(reqwest_headers);
+
+        match request.body {
+            Some(Payload::Text(body)) => {request_builder.body(body);},
+            Some(Payload::Binary(body)) => {request_builder.body(body);},
+            None => (),
         }
 
-        url = url.join(&request.path())?;
-            
-        let query = request.query();
-        if query.len() > 0 {
-            url.query_pairs_mut().extend_pairs(request.query());
-        }
+        let request = request_builder.build()?;
+        let response: HttpResponse = self.execute(request)?.into();
+        println!("{}", response);
 
-        let response: HttpResponse = 
-            self.request(request.method().into(), url)
-            .headers(headers)
-            .body(reqwest::Body::new(Cursor::new(request.body().unwrap())))
-            .send()
-            .unwrap()
-            .into();
-
-        // println!("Response");
-        // println!("  Code: {}", response.status);
-        // println!("  Body: {}", response.to_string().unwrap());
-        Ok(request.deserialize(&response)?)
+        Ok(resource.deserialize(&response)?)
     }
 }
+
+
 
 pub struct TungsteniteClient<R> where R: WebsocketResource {
     pub client: tungstenite::protocol::WebSocket<tungstenite::client::AutoStream>,
@@ -241,9 +390,12 @@ impl<R> WebsocketClient<R> for TungsteniteClient<R> where R: WebsocketResource {
         use tungstenite::handshake::client::{Request};
 
         let mut tungstenite_request = Request::from(url);
-        for (name, value) in request.headers() {
-            tungstenite_request.add_header(Cow::from(name), Cow::from(value));
-        }
+        // for header in request.headers() {
+        //     match header.value {
+        //         HeaderValue::String(value) => tungstenite_request.add_header(Cow::from(header.name), Cow::from(value)),
+        //         HeaderValue::Bytes(value) => tungstenite_request.add_header(Cow::from(header.name), Cow::from(value)),
+        //     }
+        // }
 
         let (client, response) = tungstenite::connect(tungstenite_request).unwrap();
         if response.code != 101 {
