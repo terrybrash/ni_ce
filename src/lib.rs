@@ -19,36 +19,27 @@ extern crate tungstenite;
 extern crate uuid;
 
 pub mod api;
-// pub mod gemini;
-// pub mod gdax;
+pub mod exmo;
 pub mod liqui;
 mod model;
 mod status;
-
 pub use model::*;
 
+use failure::{ResultExt, Error, Fail, Context, err_msg};
+use decimal::d128;
+
 pub trait RestExchange: std::fmt::Debug {
-    fn place_order(&mut self, order: NewOrder) -> Order;
-    fn balances(&mut self) -> Vec<Balance>;
-    fn orders(&mut self, product: CurrencyPair) -> Vec<Order>;
-    fn orderbook(&mut self, product: CurrencyPair) -> Orderbook;
+    fn place_order(&mut self, order: NewOrder) -> Result<Order, Error>;
+    fn balances(&mut self) -> Result<Vec<Balance>, Error>;
+    fn orders(&mut self, product: CurrencyPair) -> Result<Vec<Order>, Error>;
+    fn orderbook(&mut self, product: CurrencyPair) -> Result<Orderbook, Error>;
     // fn exchange(&mut self) -> MutexGuard<Exchange>;
 }
 
-// use url::Url;
-
-// pub type Header = (&'static str, String);
-
-// #[derive(Clone, Debug, Eq, Hash, PartialEq)]
-// pub enum Method {
-// 	Post,
-// 	Get,
-// }
-
-// #[derive(Clone, Debug, Eq, Hash, PartialEq)]
-// pub struct Request {
-//     pub address: Url,
-//     pub headers: Option<Vec<Header>>,
-//     pub method: Method,
-//     pub payload: Option<String>,
-// }
+pub fn d128_from_f64(float: f64) -> Result<d128, Error> {
+    use std::str::{FromStr};
+    match d128::from_str(&float.to_string()) {
+    	Ok(decimal) => Ok(decimal),
+    	Err(_) => Err(err_msg("Couldn't convert f64 into d128"))
+    }
+}

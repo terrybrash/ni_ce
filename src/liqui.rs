@@ -23,6 +23,9 @@ use sha2::{Sha512};
 use std::fmt::{self, Display, Formatter};
 use std::str::{FromStr};
 use url::Url;
+use d128_from_f64;
+use std::collections::HashMap;
+use std::convert::{TryFrom, TryInto};
 
 #[derive(Debug, Hash, PartialEq, PartialOrd, Eq, Ord, Clone, Deserialize, Serialize)]
 pub struct Credential {
@@ -122,58 +125,116 @@ impl From<Side> for ccex::Side {
 }
 
 #[derive(Debug, Hash, PartialEq, PartialOrd, Eq, Ord, Clone, Copy, Deserialize, Serialize)]
-pub enum Product {
-	btc_usdt,
-	eth_btc,
-	eth_usdt,
+pub enum Currency {
+	BTC,
+	ETH,
+	USDT,
+	LTC,
+	BCH,
 }
 
-impl Display for Product {
+impl TryFrom<ccex::Currency> for Currency {
+	type Error = Error;
+	fn try_from(currency: ccex::Currency) -> Result<Self, Self::Error> {
+		match currency {
+			ccex::Currency::BTC => Ok(Currency::BTC),
+			ccex::Currency::ETH => Ok(Currency::ETH),
+			ccex::Currency::USDT => Ok(Currency::USDT),
+			ccex::Currency::LTC => Ok(Currency::LTC),
+			ccex::Currency::BCH	 => Ok(Currency::BCH),
+			currency => Err(format_err!("{} isn't supported", currency))
+		}
+	}
+}
+
+impl TryFrom<Currency> for ccex::Currency {
+	type Error = Error;
+	fn try_from(currency: Currency) -> Result<Self, Self::Error> {
+		match currency {
+			Currency::BTC => Ok(ccex::Currency::BTC),
+			Currency::ETH => Ok(ccex::Currency::ETH),
+			Currency::USDT => Ok(ccex::Currency::USDT),
+			Currency::LTC => Ok(ccex::Currency::LTC),
+			Currency::BCH => Ok(ccex::Currency::BCH),
+			currency => Err(format_err!("{} isn't supported", currency))
+		}
+	}
+}
+
+impl FromStr for Currency {
+	type Err = Error;
+	fn from_str(s: &str) -> Result<Self, Self::Err> {
+		const currencies: [(&'static str, Currency); 5] = [
+			("BTC", Currency::BTC),
+			("ETH", Currency::ETH),
+			("USDT", Currency::USDT),
+			("LTC", Currency::LTC),
+			("BCH", Currency::BCH),
+        ];
+
+        for &(string, currency) in &currencies {
+            if string.eq_ignore_ascii_case(s) {
+                return Ok(currency);
+            }
+        }
+        Err(format_err!("couldn't parse \"{}\"", s))
+	}
+}
+
+impl Display for Currency {
 	fn fmt(&self, f: &mut Formatter) -> Result<(), fmt::Error> {
-		write!(f, "{:?}", self)
+		f.write_str(format!("{:?}", self).to_lowercase().as_str())
 	}
 }
 
-fn from_string(string: &str) -> ccex::CurrencyPair {
-	let currencies = string.split('_').map(str::to_uppercase).collect();
-	let (base, quote) = (&currencies[0], &currencies[1]);
-	(base.parse().unwrap(), quote.parse().unwrap())
-}
+#[derive(Debug, Hash, PartialEq, PartialOrd, Eq, Ord, Clone, Copy, Deserialize, Serialize)]
+pub struct CurrencyPair(pub Currency, pub Currency);
 
-fn into_string((base, quote): ccex::CurrencyPair) -> String {
-	let (base, quote) = (base.to_string(), quote.to_string());
-	[&base, "_", &quote].concat().to_lowercase()
-}
-
-impl From<ccex::CurrencyPair> for Product {
-	fn from(pair: ccex::CurrencyPair) -> Self {
-		match pair {
-	        (ccex::Currency::BTC, ccex::Currency::USDT)	=> Product::btc_usdt,
-	        (ccex::Currency::ETH, ccex::Currency::BTC) 	=> Product::eth_btc,
-	        (ccex::Currency::ETH, ccex::Currency::USDT) => Product::eth_usdt,
-	        product => unimplemented!("{:?}", product),	
-		}
+impl TryFrom<ccex::CurrencyPair> for CurrencyPair {
+	type Error = Error;
+	fn try_from(ccex::CurrencyPair(base, quote): ccex::CurrencyPair) -> Result<Self, Self::Error> {
+		Ok(CurrencyPair(base.try_into()?, quote.try_into()?))
 	}
 }
 
-impl From<Product> for ccex::CurrencyPair {
-	fn from(pair: Product) -> Self {
-		match pair {
-	        Product::btc_usdt	=> (ccex::Currency::BTC, ccex::Currency::USDT),
-	        Product::eth_btc 	=> (ccex::Currency::ETH, ccex::Currency::BTC),
-	        Product::eth_usdt 	=> (ccex::Currency::ETH, ccex::Currency::USDT),
-	        product => unimplemented!("{:?}", product),	
-		}
+impl TryFrom<CurrencyPair> for ccex::CurrencyPair {
+	type Error = Error;
+	fn try_from(CurrencyPair(base, quote): CurrencyPair) -> Result<Self, Self::Error> {
+		Ok(ccex::CurrencyPair(base.try_into()?, quote.try_into()?))
+	}
+}
+
+impl FromStr for CurrencyPair {
+	type Err = Error;
+	fn from_str(s: &str) -> Result<Self, Self::Err> {
+		let currencies: Vec<&str> = s.split('_').collect();
+		let (base, quote) = (&currencies[0], &currencies[1]);
+		let currency_pair = CurrencyPair(base.parse()?, quote.parse()?);
+		Ok(currency_pair)
+	}
+}
+
+impl Display for CurrencyPair {
+	fn fmt(&self, f: &mut Formatter) -> Result<(), fmt::Error> {
+		let CurrencyPair(base, quote) = *self;
+		let (base, quote) = (base.to_string(), quote.to_string());
+		f.write_str([&base, "_", &quote].concat().to_lowercase().as_str())
 	}
 }
 
 #[derive(Debug, Hash, PartialEq, PartialOrd, Eq, Ord, Clone, Deserialize, Serialize)]
 pub struct GetDepth {
-	pub product: Product,
+	pub product: String,
+}
+
+#[derive(Debug, PartialEq, PartialOrd, Clone, Deserialize, Serialize)]
+pub struct Orderbook {
+	pub bids: Vec<(f64, f64)>,
+	pub asks: Vec<(f64, f64)>,
 }
 
 impl RestResource for GetDepth {
-	type Response = Depth;
+	type Response = HashMap<String, Orderbook>;
 
 	fn method(&self) -> Method {
 		Method::Get
@@ -186,20 +247,6 @@ impl RestResource for GetDepth {
 	fn deserialize(&self, response: &HttpResponse) -> Result<Self::Response, Error> {
 		deserialize_public_response(response)
 	}
-}
-
-
-#[derive(Debug, PartialEq, PartialOrd, Clone, Deserialize, Serialize)]
-pub struct Depth {
-	pub eth_btc: Option<Orderbook>,
-	pub btc_usdt: Option<Orderbook>,
-	pub eth_usdt: Option<Orderbook>,
-}
-
-#[derive(Debug, PartialEq, PartialOrd, Clone, Deserialize, Serialize)]
-pub struct Orderbook {
-	pub bids: Vec<(f64, f64)>,
-	pub asks: Vec<(f64, f64)>,
 }
 
 #[derive(Debug, Hash, PartialEq, PartialOrd, Eq, Ord, Clone, Deserialize, Serialize)]
@@ -237,11 +284,11 @@ impl<'a> RestResource for PrivateRequest<GetInfo, &'a Credential> {
 	}
 }
 
-#[derive(Debug, PartialEq, PartialOrd, Clone, Deserialize, Serialize)]
+#[derive(Debug, PartialEq, Clone, Deserialize, Serialize)]
 pub struct Info {
 	/// Your account balance available for trading. Doesn’t include funds on
 	/// your open orders.
-	pub funds: Funds,
+	pub funds: HashMap<String, f64>,
 
 	/// The privileges of the current API key. At this time the privilege to
 	/// withdraw is not used anywhere.
@@ -254,15 +301,6 @@ pub struct Info {
 	pub server_time: i64,
 }
 
-#[derive(Debug, PartialEq, PartialOrd, Clone, Deserialize, Serialize)]
-pub struct Funds {
-	pub eth: f64,
-	pub btc: f64,
-	pub ltc: f64,
-	pub bcc: f64,
-	pub usdt: f64,
-}
-
 #[derive(Debug, Hash, PartialEq, PartialOrd, Eq, Ord, Clone, Deserialize, Serialize)]
 pub struct Rights {
 	pub info: bool,
@@ -272,7 +310,7 @@ pub struct Rights {
 
 #[derive(Debug, Hash, PartialEq, PartialOrd, Eq, Ord, Clone, Deserialize, Serialize)]
 pub struct PlaceOrder {
-	pub pair: Product,
+	pub pair: CurrencyPair,
 	#[serde(rename="type")] 
 	pub side: Side,
 	pub rate: d128,
@@ -314,32 +352,43 @@ impl<'a> RestResource for PrivateRequest<PlaceOrder, &'a Credential> {
 	}
 }
 
-#[derive(Debug, PartialEq, PartialOrd, Clone, Deserialize, Serialize)]
+#[derive(Debug, PartialEq, Clone, Deserialize, Serialize)]
 pub struct OrderPlacement {
 	/// The amount of currency bought/sold.
-	received: d128,
+	received: f64,
 
 	/// The remaining amount of currency to be bought/sold (and the initial
 	/// order amount).
-	remains: d128,
+	remains: f64,
 
 	/// Is equal to 0 if the request was fully “matched” by the opposite
 	/// orders, otherwise the ID of the executed order will be returned.
 	order_id: i64,
 
 	/// Balance after the request.
-	funds: Funds,
+	funds: HashMap<String, f64>,
 }
 
 #[derive(Debug, PartialEq, PartialOrd, Clone, Deserialize, Serialize)]
 pub struct GetActiveOrders {
-	pair: Product,
+	pair: CurrencyPair,
 	nonce: u32,
+}
+
+#[derive(Debug, PartialEq, PartialOrd, Clone, Deserialize, Serialize)]
+pub struct Order {
+	pub status: i32,
+	pub pair: String,
+	#[serde(rename = "type")]
+	pub side: Side,
+	pub amount: f64,
+	pub rate: f64,
+	pub timestamp_created: u64,
 }
 
 impl<'a> NeedsAuthentication<&'a Credential> for GetActiveOrders {}
 impl<'a> RestResource for PrivateRequest<GetActiveOrders, &'a Credential> {
-	type Response = serde_json::Value;
+	type Response = HashMap<String, Order>;
 
 	fn method(&self) -> Method {
 		Method::Post
@@ -351,8 +400,8 @@ impl<'a> RestResource for PrivateRequest<GetActiveOrders, &'a Credential> {
 
 	fn body(&self) -> Result<Option<Payload>, Error> {
 		let body = QueryBuilder::with_capacity(3)
-			.param("nonce", self.request.nonce.to_string())
 			.param("method", "ActiveOrders")
+			.param("nonce", self.request.nonce.to_string())
 			.param("pair", self.request.pair.to_string())
 			.build();
 
@@ -368,23 +417,31 @@ impl<'a> RestResource for PrivateRequest<GetActiveOrders, &'a Credential> {
 	}
 }
 
-#[derive(Debug, PartialEq, PartialOrd, Clone, Deserialize, Serialize)]
-pub struct Order {
-	pub status: i32,
-	pub pair: Product,
-	#[serde(rename = "type")]
-	pub side: Side,
-	pub amount: f64,
-	pub rate: f64,
-	pub timestamp_created: u64,
+#[derive(Deserialize, Serialize)]
+struct ErrorResponse {
+	pub success: i64,
+	pub error: String,
 }
 
 fn deserialize_public_response<T>(response: &HttpResponse) -> Result<T, Error>
 where T: DeserializeOwned {
-	match response.body {
-		Some(Payload::Text(ref body)) => Ok(serde_json::from_str(body)?),
-		Some(Payload::Binary(ref body)) => Ok(serde_json::from_slice(body)?),
-		None => Err(format_err!("body is empty")),
+	let response: serde_json::Value = match response.body {
+		Some(Payload::Text(ref body)) => serde_json::from_str(body)?,
+		Some(Payload::Binary(ref body)) => serde_json::from_slice(body)?,
+		None => return Err(format_err!("body is empty")),
+	};
+
+	let is_success = response.as_object()
+		.and_then(|o| o.get("success"))
+		.and_then(|o| o.as_u64())
+		.map_or(true, |o| if o == 0 {false} else {true});
+
+	if is_success {
+		let response: T = serde_json::from_value(response)?;
+		Ok(response)
+	} else {
+		let response: ErrorResponse = serde_json::from_value(response)?;
+		Err(format_err!("The server returned: {}", response.error))
 	}
 }
 
@@ -428,12 +485,6 @@ pub fn nonce() -> u32 {
 	(now.timestamp() as u32 - 1516812776u32) * 1000 + now.timestamp_subsec_millis()
 }
 
-fn d128_from_f64(float: f64) -> d128 {
-    use std::str::{FromStr};
-    d128::from_str(&float.to_string()).unwrap()
-}
-
-
 #[derive(Debug, Clone)]
 pub struct Liqui<Client>
 where Client: HttpClient {
@@ -445,57 +496,56 @@ where Client: HttpClient {
 
 impl<Client> ccex::RestExchange for Liqui<Client>
 where Client: HttpClient {
-    fn balances(&mut self) -> Vec<ccex::Balance> {
+    fn balances(&mut self) -> Result<Vec<ccex::Balance>, Error> {
         let request = GetInfo {
             nonce: nonce(),
         }.authenticate(&self.credential);
-        let response = self.client.send(&self.host, request).unwrap();
+        let response = self.client.send(&self.host, request)?;
 
-        vec![
-            ccex::Balance::new(ccex::Currency::BTC, d128_from_f64(response.funds.btc)),
-            ccex::Balance::new(ccex::Currency::ETH, d128_from_f64(response.funds.eth)),
-            ccex::Balance::new(ccex::Currency::BCH, d128_from_f64(response.funds.bcc)),
-            ccex::Balance::new(ccex::Currency::USDT, d128_from_f64(response.funds.usdt)),
-        ]
+        let mut balances = Vec::with_capacity(10);
+        for (currency, amount) in response.funds {
+        	if let Ok(currency) = currency.parse() {
+        		balances.push(ccex::Balance::new(currency, d128_from_f64(amount)?));
+        	}
+        }
+        Ok(balances)
     }
 
-    fn orderbook(&mut self, product: ccex::CurrencyPair) -> ccex::Orderbook {
-    	let product = product.into();
-	    let request = GetDepth {product};
-	    let response = self.client.send(&self.host, request).unwrap();
+    fn orderbook(&mut self, product: ccex::CurrencyPair) -> Result<ccex::Orderbook, Error> {
+    	let product = CurrencyPair::try_from(product)?.to_string();
+	    let request = GetDepth {
+	    	product: product.clone()
+	    };
+	    let mut response = self.client.send(&self.host, request)?;
 
-	    let orderbook = match product {
-	    	Product::btc_usdt => response.btc_usdt.unwrap(),
-	    	Product::eth_usdt => response.eth_usdt.unwrap(),
-	    	Product::eth_btc => response.eth_btc.unwrap(),
+	    let liqui_orderbook = match response.remove(&product) {
+	    	Some(orderbook) => orderbook,
+	    	None => panic!(),
 	    };
 
-	    let bids = orderbook.bids.iter().map(|&(price, amount)| {
-	        let price = d128::from_str(&price.to_string()).unwrap();
-	        let amount = d128::from_str(&amount.to_string()).unwrap();
-	        ccex::Offer::new(price, amount)
-	    }).collect();
-
-	    let asks = orderbook.asks.iter().map(|&(price, amount)| {
-	        let price = d128::from_str(&price.to_string()).unwrap();
-	        let amount = d128::from_str(&amount.to_string()).unwrap();
-	        ccex::Offer::new(price, amount)
-	    }).collect();
-
-	    ccex::Orderbook {
-	        bids,
-	        asks,
+	    let capacity = Ord::max(liqui_orderbook.asks.len(), liqui_orderbook.bids.len());
+	    let mut orderbook = ccex::Orderbook::with_capacity(capacity);
+	    for (price, amount) in liqui_orderbook.bids.into_iter() {
+	    	let price = d128_from_f64(price)?;
+	    	let amount = d128_from_f64(amount)?;
+	    	orderbook.add_or_update_bid(ccex::Offer::new(price, amount));
 	    }
+	    for (price, amount) in liqui_orderbook.asks.into_iter() {
+	    	let price = d128_from_f64(price)?;
+	    	let amount = d128_from_f64(amount)?;
+	    	orderbook.add_or_update_ask(ccex::Offer::new(price, amount));
+	    }
+	    Ok(orderbook)
 	}
 
-    fn place_order(&mut self, order: ccex::NewOrder) -> ccex::Order {
+    fn place_order(&mut self, order: ccex::NewOrder) -> Result<ccex::Order, Error> {
     	let (price, quantity) = match order.instruction {
     		ccex::NewOrderInstruction::Limit {price, quantity, ..} => (price, quantity),
     		instruction => unimplemented!("liqui doesn't support {:?}", instruction),
     	};
 
     	let request = PlaceOrder {
-    		pair: order.product.into(),
+    		pair: order.product.try_into()?,
     		side: order.side.into(),
     		rate: price.clone(),
     		amount: quantity,
@@ -504,7 +554,7 @@ where Client: HttpClient {
 		let request = request.authenticate(&self.credential);
 		let response = self.client.send(&self.host, request).unwrap();
 
-		ccex::Order {
+		let order = ccex::Order {
 			id: Some(order.id),
 			server_id: Some(response.order_id.to_string()),
 			side: order.side,
@@ -512,41 +562,44 @@ where Client: HttpClient {
 			status: ccex::OrderStatus::Open,
 			instruction: ccex::OrderInstruction::Limit {
 				price: price,
-				original_quantity: response.received + response.remains,
-				remaining_quantity: response.remains,
+				original_quantity: d128_from_f64(response.received)? + d128_from_f64(response.remains)?,
+				remaining_quantity: d128_from_f64(response.remains)?,
 				time_in_force: ccex::TimeInForce::GoodTillCancelled,
 			}
-		}
+		};
+		Ok(order)
     }
 
-    fn orders(&mut self, product: ccex::CurrencyPair) -> Vec<ccex::Order> {
+    fn orders(&mut self, product: ccex::CurrencyPair) -> Result<Vec<ccex::Order>, Error> {
     	let request = GetActiveOrders {
-    		pair: product.into(),
+    		pair: product.try_into()?,
     		nonce: nonce(),
     	};
     	let request = request.authenticate(&self.credential);
-    	let response = self.client.send(&self.host, request).unwrap();
+    	let response = self.client.send(&self.host, request)?;
 
-    	let response = match response {
-    		serde_json::Value::Object(response) => response,
-    		value => panic!("expected a serde_json::Value::Object; but got {:?}", value)
-    	};
+    	// let response = match response {
+    	// 	serde_json::Value::Object(response) => response,
+    	// 	value => panic!("expected a serde_json::Value::Object; but got {:?}", value)
+    	// };
 
-    	response.into_iter().map(|(key, value)| {
-    		let order: Order = serde_json::from_value(value).unwrap();
-    		ccex::Order {
+    	let mut orders = Vec::with_capacity(response.len());
+    	for (id, order) in response.into_iter() {
+    		let order = ccex::Order {
     			id: None,
-    			server_id: Some(key),
+    			server_id: Some(id),
     			side: order.side.into(),
-    			product: order.pair.into(),
+    			product: order.pair.parse::<CurrencyPair>()?.try_into()?,
     			status: ccex::OrderStatus::Open,
     			instruction: ccex::OrderInstruction::Limit {
-    				price: d128_from_f64(order.rate),
+    				price: d128_from_f64(order.rate)?,
     				original_quantity: d128::zero(),
-    				remaining_quantity: d128_from_f64(order.amount),
+    				remaining_quantity: d128_from_f64(order.amount)?,
     				time_in_force: ccex::TimeInForce::GoodTillCancelled,
     			}
-    		}
-    	}).collect()
+    		};
+    		orders.push(order);
+    	}
+    	Ok(orders)
     }
 }

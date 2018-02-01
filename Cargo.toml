@@ -7,6 +7,7 @@ authors = ["Terry Brashaw <terrybrashaw@gmail.com>"]
 base64 = "0.9.0"
 chrono = {version = "0.4.0", features = ["serde"]}
 decimal = {version = "2.0.4", git = "https://github.com/terrybrashaw/decimal.git"}
+colored = "1.6.0"
 hex = "0.3.1"
 hmac = "0.5.0"
 sha2 = "0.7.0"

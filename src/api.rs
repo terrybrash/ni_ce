@@ -222,9 +222,7 @@ pub enum WebsocketMessage {
 }
 
 pub trait HttpClient: fmt::Debug {
-    type Error: fmt::Debug;
-
-    fn send<Request>(&mut self, url: &Url, request: Request) -> Result<Request::Response, Self::Error> where Request: RestResource;
+    fn send<Request>(&mut self, url: &Url, request: Request) -> Result<Request::Response, Error> where Request: RestResource;
 }
 
 impl From<Method> for reqwest::Method {
@@ -340,11 +338,9 @@ impl Display for HttpRequest {
 // todo: impl common headers in RestResource (like Accept-Encoding)
 
 impl HttpClient for reqwest::Client {
-    type Error = Error;
-
-    fn send<Resource>(&mut self, host: &Url, resource: Resource) -> Result<Resource::Response, Self::Error> where Resource: RestResource {
+    fn send<Resource>(&mut self, host: &Url, resource: Resource) -> Result<Resource::Response, Error> where Resource: RestResource {
         let request = HttpRequest::new(host.clone(), &resource)?;
-        println!("{}", request);
+        // println!("{}", request);
 
         let mut request_builder = self.request(request.method.into(), request.url);
 
@@ -362,7 +358,7 @@ impl HttpClient for reqwest::Client {
 
         let request = request_builder.build()?;
         let response: HttpResponse = self.execute(request)?.into();
-        println!("{}", response);
+        // println!("{}", response);
 
         Ok(resource.deserialize(&response)?)
     }

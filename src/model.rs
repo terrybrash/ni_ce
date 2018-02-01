@@ -2,20 +2,38 @@ use decimal::d128;
 use std::fmt;
 use uuid::Uuid;
 use chrono::{DateTime, Utc};
+use std::str::{FromStr};
 
-pub type CurrencyPair = (Currency, Currency);
 pub type ID = i64;
 
-#[derive(Debug, Hash, Eq, PartialEq, Copy, Clone, Serialize, Deserialize)]
+#[derive(Debug, Hash, PartialEq, PartialOrd, Eq, Ord, Clone, Copy, Deserialize, Serialize)]
+pub struct CurrencyPair(pub Currency, pub Currency);
+
+pub const BTCUSD:  CurrencyPair = CurrencyPair(Currency::BTC, Currency::USD);
+pub const ETHBTC:  CurrencyPair = CurrencyPair(Currency::ETH, Currency::BTC);
+pub const BTCUSDT: CurrencyPair = CurrencyPair(Currency::BTC, Currency::USDT);
+
+#[derive(Debug, Hash, PartialEq, PartialOrd, Eq, Ord, Clone, Copy, Deserialize, Serialize)]
 pub enum Currency {
-    BTC,
-    ETH,
-    USDT,
-    USD,
     BCH,
-    LTC,
-    GBP,
+    BTC,
+    DASH,
+    DOGE,
+    ETC,
+    ETH,
     EUR,
+    GBP,
+    KICK,
+    LTC,
+    PLN,
+    RUB,
+    UAH,
+    USD,
+    USDT,
+    WAVES,
+    XMR,
+    XRP,
+    ZEC,
 }
 
 impl fmt::Display for Currency {
@@ -24,20 +42,43 @@ impl fmt::Display for Currency {
     }
 }
 
-// impl FromStr for Point {
-//     type Err = ParseIntError;
 
-//     fn from_str(s: &str) -> Result<Self, Self::Err> {
-//         let coords: Vec<&str> = s.trim_matches(|p| p == '(' || p == ')' )
-//                                  .split(",")
-//                                  .collect();
+#[derive(Debug, Hash, Eq, PartialEq, Clone, Serialize, Deserialize)]
+pub struct ParseCurrencyError(String);
 
-//         let x_fromstr = coords[0].parse::<i32>()?;
-//         let y_fromstr = coords[1].parse::<i32>()?;
+impl FromStr for Currency {
+    type Err = ParseCurrencyError;
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        const currencies: [(&'static str, Currency); 19] = [
+            ("BCH", Currency::BCH),
+            ("BTC", Currency::BTC),
+            ("DASH", Currency::DASH),
+            ("DOGE", Currency::DOGE),
+            ("ETC", Currency::ETC),
+            ("ETH", Currency::ETH),
+            ("GBP", Currency::GBP),
+            ("EUR", Currency::EUR),
+            ("KICK", Currency::KICK),
+            ("LTC", Currency::LTC),
+            ("PLN", Currency::PLN),
+            ("RUB", Currency::RUB),
+            ("UAH", Currency::UAH),
+            ("USD", Currency::USD),
+            ("USDT", Currency::USDT),
+            ("WAVES", Currency::WAVES),
+            ("XMR", Currency::XMR),
+            ("XRP", Currency::XRP),
+            ("ZEC", Currency::ZEC),
+        ];
 
-//         Ok(Point { x: x_fromstr, y: y_fromstr })
-//     }
-// }
+        for &(string, currency) in &currencies {
+            if string.eq_ignore_ascii_case(s) {
+                return Ok(currency);
+            }
+        }
+        Err(ParseCurrencyError(format!("couldn't parse \"{}\"", s)))
+    }
+}
 
 #[derive(Debug, Hash, Eq, PartialEq, Copy, Clone, Serialize, Deserialize)]
 pub enum Environment {
@@ -234,21 +275,40 @@ impl Offer {
     pub fn new(price: d128, supply: d128) -> Self {
         Offer { price, supply }
     }
+
+    pub fn total(&self) -> d128 {
+        self.price * self.supply
+    }
 }
 
 #[derive(Debug, Default, Clone, Serialize, Deserialize)]
 pub struct Orderbook {
-    pub asks: Vec<Offer>,
-    pub bids: Vec<Offer>,
+    pub(self) asks: Vec<Offer>,
+    pub(self) bids: Vec<Offer>,
 }
 
 impl Orderbook {
+    pub fn with_capacity(capacity: usize) -> Self {
+        Orderbook {
+            asks: Vec::with_capacity(capacity),
+            bids: Vec::with_capacity(capacity),
+        }
+    }
+
+    pub fn bids(&self) -> &Vec<Offer> {
+        &self.bids
+    }
+
+    pub fn asks(&self) -> &Vec<Offer> {
+        &self.asks
+    }
+
     pub fn remove(&mut self, side: Side, offer: Offer) {
         let current_offer = match side {
-            Side::Ask => self.asks
-                .binary_search_by_key(&offer.price, |offer| offer.price),
-            Side::Bid => self.bids
-                .binary_search_by_key(&offer.price, |offer| offer.price),
+            Side::Ask => 
+                self.asks.binary_search_by_key(&offer.price, |offer| offer.price),
+            Side::Bid => 
+                self.bids.binary_search_by_key(&offer.price, |offer| offer.price),
         };
 
         match (side, current_offer) {
@@ -265,24 +325,32 @@ impl Orderbook {
     }
 
     pub fn add_or_update(&mut self, side: Side, offer: Offer) {
-        let current_offer = match side {
-            Side::Ask => self.asks
-                .binary_search_by_key(&offer.price, |offer| offer.price),
-            Side::Bid => self.bids
-                .binary_search_by_key(&offer.price, |offer| offer.price),
-        };
+        match side {
+            Side::Ask => self.add_or_update_ask(offer),
+            Side::Bid => self.add_or_update_bid(offer),
+        }
+    }
 
-        match (side, current_offer) {
-            (Side::Ask, Ok(current_offer)) => {
+    pub fn add_or_update_ask(&mut self, offer: Offer) {
+        let current_offer = self.asks.binary_search_by_key(&offer.price, |offer| offer.price);
+
+        match current_offer {
+            Ok(current_offer) => {
                 self.asks[current_offer].supply = offer.supply;
             }
-            (Side::Bid, Ok(current_offer)) => {
-                self.bids[current_offer].supply = offer.supply;
-            }
-            (Side::Ask, Err(new_offer)) => {
+            Err(new_offer) => {
                 self.asks.insert(new_offer, offer);
             }
-            (Side::Bid, Err(new_offer)) => {
+        }
+    }
+
+    pub fn add_or_update_bid(&mut self, offer: Offer) {
+        let current_offer = self.bids.binary_search_by_key(&offer.price, |offer| offer.price);
+        match current_offer {
+            Ok(current_offer) => {
+                self.bids[current_offer].supply = offer.supply;
+            }
+            Err(new_offer) => {
                 self.bids.insert(new_offer, offer);
             }
         }
