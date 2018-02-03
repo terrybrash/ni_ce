@@ -24,7 +24,6 @@ use std::str::{FromStr};
 use url::Url;
 use std::collections::HashMap;
 use std::convert::{TryFrom, TryInto};
-use d128_from_f64;
 use failure::{Fail, err_msg, Error, ResultExt};
 
 #[derive(Debug, Hash, PartialEq, PartialOrd, Eq, Ord, Clone, Deserialize, Serialize)]

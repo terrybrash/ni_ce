@@ -23,7 +23,6 @@ use sha2::{Sha512};
 use std::fmt::{self, Display, Formatter};
 use std::str::{FromStr};
 use url::Url;
-use d128_from_f64;
 use std::collections::HashMap;
 use std::convert::{TryFrom, TryInto};
 
@@ -505,7 +504,7 @@ where Client: HttpClient {
         let mut balances = Vec::with_capacity(10);
         for (currency, amount) in response.funds {
         	if let Ok(currency) = currency.parse() {
-        		balances.push(ccex::Balance::new(currency, d128_from_f64(amount)?));
+        		balances.push(ccex::Balance::new(currency, amount.try_into()?));
         	}
         }
         Ok(balances)
@@ -526,13 +525,13 @@ where Client: HttpClient {
 	    let capacity = Ord::max(liqui_orderbook.asks.len(), liqui_orderbook.bids.len());
 	    let mut orderbook = ccex::Orderbook::with_capacity(capacity);
 	    for (price, amount) in liqui_orderbook.bids.into_iter() {
-	    	let price = d128_from_f64(price)?;
-	    	let amount = d128_from_f64(amount)?;
+	    	let price = price.try_into()?;
+	    	let amount = amount.try_into()?;
 	    	orderbook.add_or_update_bid(ccex::Offer::new(price, amount));
 	    }
 	    for (price, amount) in liqui_orderbook.asks.into_iter() {
-	    	let price = d128_from_f64(price)?;
-	    	let amount = d128_from_f64(amount)?;
+	    	let price = price.try_into()?;
+	    	let amount = amount.try_into()?;
 	    	orderbook.add_or_update_ask(ccex::Offer::new(price, amount));
 	    }
 	    Ok(orderbook)
@@ -562,8 +561,8 @@ where Client: HttpClient {
 			status: ccex::OrderStatus::Open,
 			instruction: ccex::OrderInstruction::Limit {
 				price: price,
-				original_quantity: d128_from_f64(response.received)? + d128_from_f64(response.remains)?,
-				remaining_quantity: d128_from_f64(response.remains)?,
+				original_quantity: d128::try_from(response.received)? + d128::try_from(response.remains)?,
+				remaining_quantity: d128::try_from(response.remains)?,
 				time_in_force: ccex::TimeInForce::GoodTillCancelled,
 			}
 		};
@@ -592,9 +591,9 @@ where Client: HttpClient {
     			product: order.pair.parse::<CurrencyPair>()?.try_into()?,
     			status: ccex::OrderStatus::Open,
     			instruction: ccex::OrderInstruction::Limit {
-    				price: d128_from_f64(order.rate)?,
+    				price: order.rate.try_into()?,
     				original_quantity: d128::zero(),
-    				remaining_quantity: d128_from_f64(order.amount)?,
+    				remaining_quantity: order.amount.try_into()?,
     				time_in_force: ccex::TimeInForce::GoodTillCancelled,
     			}
     		};

@@ -268,16 +268,16 @@ impl fmt::Display for Side {
 #[derive(Debug, Hash, PartialEq, Clone, Serialize, Deserialize)]
 pub struct Offer {
     pub price: d128,
-    pub supply: d128,
+    pub quantity: d128,
 }
 
 impl Offer {
-    pub fn new(price: d128, supply: d128) -> Self {
-        Offer { price, supply }
+    pub fn new(price: d128, quantity: d128) -> Self {
+        Offer { price, quantity }
     }
 
     pub fn total(&self) -> d128 {
-        self.price * self.supply
+        self.price * self.quantity
     }
 }
 
@@ -336,7 +336,7 @@ impl Orderbook {
 
         match current_offer {
             Ok(current_offer) => {
-                self.asks[current_offer].supply = offer.supply;
+                self.asks[current_offer].quantity = offer.quantity;
             }
             Err(new_offer) => {
                 self.asks.insert(new_offer, offer);
@@ -348,7 +348,7 @@ impl Orderbook {
         let current_offer = self.bids.binary_search_by_key(&offer.price, |offer| offer.price);
         match current_offer {
             Ok(current_offer) => {
-                self.bids[current_offer].supply = offer.supply;
+                self.bids[current_offer].quantity = offer.quantity;
             }
             Err(new_offer) => {
                 self.bids.insert(new_offer, offer);
@@ -367,13 +367,13 @@ impl Orderbook {
     pub fn supply(&self) -> d128 {
         self.asks
             .iter()
-            .fold(d128::zero(), |acc, offer| acc + offer.supply)
+            .fold(d128::zero(), |acc, offer| acc + offer.quantity)
     }
 
     pub fn demand(&self) -> d128 {
         self.bids
             .iter()
-            .fold(d128::zero(), |acc, offer| acc + offer.supply)
+            .fold(d128::zero(), |acc, offer| acc + offer.quantity)
     }
 }
 

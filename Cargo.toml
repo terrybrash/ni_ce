@@ -4,19 +4,19 @@ version = "0.1.0"
 authors = ["Terry Brashaw <terrybrashaw@gmail.com>"]
 
 [dependencies]
-base64 = "0.9.0"
-chrono = {version = "0.4.0", features = ["serde"]}
-decimal = {version = "2.0.4", git = "https://github.com/terrybrashaw/decimal.git"}
-colored = "1.6.0"
-hex = "0.3.1"
-hmac = "0.5.0"
-sha2 = "0.7.0"
-serde = "1.0.27"
-serde_derive = "1.0.27"
-serde_json = "1.0.9"
-url = "1.6.0"
-failure = {version = "0.1.1", git = "https://github.com/withoutboats/failure.git"}
-uuid = {version = "0.5.1", features = ["v4", "serde"]}
+base64 = "^0.9.0"
+chrono = {version = "^0.4.0", features = ["serde"]}
+decimal = {version = "^2.0.4", git = "https://github.com/terrybrashaw/decimal.git", branch = "hacks"}
+colored = "^1.6.0"
+hex = "^0.3.1"
+hmac = "^0.5.0"
+sha2 = "^0.7.0"
+serde = "^1.0.27"
+serde_derive = "^1.0.27"
+serde_json = "^1.0.9"
+url = "^1.6.0"
+failure = {version = "^0.1.1", git = "https://github.com/withoutboats/failure.git"}
+uuid = {version = "^0.5.1", features = ["v4", "serde"]}
 
-reqwest = "0.8.3"
-tungstenite = "0.5.3"
+reqwest = "^0.8.3"
+tungstenite = "^0.5.3"

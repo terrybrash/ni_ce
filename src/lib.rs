@@ -35,11 +35,3 @@ pub trait RestExchange: std::fmt::Debug {
     fn orderbook(&mut self, product: CurrencyPair) -> Result<Orderbook, Error>;
     // fn exchange(&mut self) -> MutexGuard<Exchange>;
 }
-
-pub fn d128_from_f64(float: f64) -> Result<d128, Error> {
-    use std::str::{FromStr};
-    match d128::from_str(&float.to_string()) {
-    	Ok(decimal) => Ok(decimal),
-    	Err(_) => Err(err_msg("Couldn't convert f64 into d128"))
-    }
-}
