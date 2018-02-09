@@ -1,4 +1,5 @@
-use decimal::d128;
+use rust_decimal::Decimal as d128;
+use num_traits::*;
 use std::fmt;
 use uuid::Uuid;
 use chrono::{DateTime, Utc};
@@ -9,31 +10,116 @@ pub type ID = i64;
 #[derive(Debug, Hash, PartialEq, PartialOrd, Eq, Ord, Clone, Copy, Deserialize, Serialize)]
 pub struct CurrencyPair(pub Currency, pub Currency);
 
+impl CurrencyPair {
+    pub fn base(&self) -> Currency {
+        let &CurrencyPair(base, _) = self;
+        base
+    }
+
+    pub fn quote(&self) -> Currency {
+        let &CurrencyPair(_, quote) = self;
+        quote
+    }
+}
+
 pub const BTCUSD:  CurrencyPair = CurrencyPair(Currency::BTC, Currency::USD);
 pub const ETHBTC:  CurrencyPair = CurrencyPair(Currency::ETH, Currency::BTC);
 pub const BTCUSDT: CurrencyPair = CurrencyPair(Currency::BTC, Currency::USDT);
 
 #[derive(Debug, Hash, PartialEq, PartialOrd, Eq, Ord, Clone, Copy, Deserialize, Serialize)]
 pub enum Currency {
+    ADX,
+    AE,
+    AION,
+    ANS,
+    ANT,
+    AST,
+    BAT,
+    BCAP,
     BCH,
+    BMC,
+    BNT,
     BTC,
+    CFI,
+    CVC,
     DASH,
+    DCT,
+    DGD,
+    DNT,
     DOGE,
+    EDG,
+    ENG,
+    EOS,
     ETC,
     ETH,
     EUR,
+    GBG,
     GBP,
+    GNO,
+    GNT,
+    GOLOS,
+    GUP,
+    HMQ,
+    ICN,
+    INCNT,
+    IND,
+    INS,
     KICK,
+    KNC,
     LTC,
+    LUN,
+    MANA,
+    MCO,
+    MGO,
+    MLN,
+    MYST,
+    NET,
+    NEU,
+    OAX,
+    OMG,
+    PAY,
     PLN,
+    PLU,
+    PRO,
+    PTOY,
+    QRL,
+    QTUM,
+    REP,
+    REQ,
+    RLC,
+    ROUND,
     RUB,
-    UAH,
+    SALT,
+    SAN,
+    SBD,
+    SNGLS,
+    SNM,
+    SNT,
+    SRN,
+    STEEM,
+    STORJ,
+    STX,
+    TAAS,
+    TIME,
+    TKN,
+    TNT,
+    TRST,
+    TRX,
+    UAHPAY,
     USD,
     USDT,
+    VEN,
+    VSL,
     WAVES,
+    WINGS,
+    XID,
     XMR,
+    XMRG,
     XRP,
+    XXX,
+    XZC,
     ZEC,
+    ZRX,
 }
 
 impl fmt::Display for Currency {
@@ -49,29 +135,102 @@ pub struct ParseCurrencyError(String);
 impl FromStr for Currency {
     type Err = ParseCurrencyError;
     fn from_str(s: &str) -> Result<Self, Self::Err> {
-        const currencies: [(&'static str, Currency); 19] = [
+        const currencies: [(&'static str, Currency); 92] = [
+            ("ADX", Currency::ADX),
+            ("AE", Currency::AE),
+            ("AION", Currency::AION),
+            ("ANS", Currency::ANS),
+            ("ANT", Currency::ANT),
+            ("AST", Currency::AST),
+            ("BAT", Currency::BAT),
+            ("BCAP", Currency::BCAP),
             ("BCH", Currency::BCH),
+            ("BMC", Currency::BMC),
+            ("BNT", Currency::BNT),
             ("BTC", Currency::BTC),
+            ("CFI", Currency::CFI),
+            ("CVC", Currency::CVC),
             ("DASH", Currency::DASH),
+            ("DCT", Currency::DCT),
+            ("DGD", Currency::DGD),
+            ("DNT", Currency::DNT),
             ("DOGE", Currency::DOGE),
+            ("EDG", Currency::EDG),
+            ("ENG", Currency::ENG),
+            ("EOS", Currency::EOS),
             ("ETC", Currency::ETC),
             ("ETH", Currency::ETH),
-            ("GBP", Currency::GBP),
             ("EUR", Currency::EUR),
+            ("GBG", Currency::GBG),
+            ("GBP", Currency::GBP),
+            ("GNO", Currency::GNO),
+            ("GNT", Currency::GNT),
+            ("GOLOS", Currency::GOLOS),
+            ("GUP", Currency::GUP),
+            ("HMQ", Currency::HMQ),
+            ("ICN", Currency::ICN),
+            ("INCNT", Currency::INCNT),
+            ("IND", Currency::IND),
+            ("INS", Currency::INS),
             ("KICK", Currency::KICK),
+            ("KNC", Currency::KNC),
             ("LTC", Currency::LTC),
+            ("LUN", Currency::LUN),
+            ("MANA", Currency::MANA),
+            ("MCO", Currency::MCO),
+            ("MGO", Currency::MGO),
+            ("MLN", Currency::MLN),
+            ("MYST", Currency::MYST),
+            ("NET", Currency::NET),
+            ("NEU", Currency::NEU),
+            ("OAX", Currency::OAX),
+            ("OMG", Currency::OMG),
+            ("PAY", Currency::PAY),
             ("PLN", Currency::PLN),
+            ("PLU", Currency::PLU),
+            ("PRO", Currency::PRO),
+            ("PTOY", Currency::PTOY),
+            ("QRL", Currency::QRL),
+            ("QTUM", Currency::QTUM),
+            ("REP", Currency::REP),
+            ("REQ", Currency::REQ),
+            ("RLC", Currency::RLC),
+            ("ROUND", Currency::ROUND),
             ("RUB", Currency::RUB),
-            ("UAH", Currency::UAH),
+            ("SALT", Currency::SALT),
+            ("SAN", Currency::SAN),
+            ("SBD", Currency::SBD),
+            ("SNGLS", Currency::SNGLS),
+            ("SNM", Currency::SNM),
+            ("SNT", Currency::SNT),
+            ("SRN", Currency::SRN),
+            ("STEEM", Currency::STEEM),
+            ("STORJ", Currency::STORJ),
+            ("STX", Currency::STX),
+            ("TAAS", Currency::TAAS),
+            ("TIME", Currency::TIME),
+            ("TKN", Currency::TKN),
+            ("TNT", Currency::TNT),
+            ("TRST", Currency::TRST),
+            ("TRX", Currency::TRX),
+            ("UAHPAY", Currency::UAHPAY),
             ("USD", Currency::USD),
             ("USDT", Currency::USDT),
+            ("VEN", Currency::VEN),
+            ("VSL", Currency::VSL),
             ("WAVES", Currency::WAVES),
+            ("WINGS", Currency::WINGS),
+            ("XID", Currency::XID),
             ("XMR", Currency::XMR),
+            ("XMRG", Currency::XMRG),
             ("XRP", Currency::XRP),
+            ("XXX", Currency::XXX),
+            ("XZC", Currency::XZC),
             ("ZEC", Currency::ZEC),
+            ("ZRX", Currency::ZRX),
         ];
 
-        for &(string, currency) in &currencies {
+        for &(string, currency) in currencies.iter() {
             if string.eq_ignore_ascii_case(s) {
                 return Ok(currency);
             }
@@ -295,12 +454,12 @@ impl Orderbook {
         }
     }
 
-    pub fn bids(&self) -> &Vec<Offer> {
-        &self.bids
+    pub fn bids<'a>(&'a self) -> Box<Iterator<Item=&'a Offer> + 'a> {
+        Box::new(self.bids.iter().rev())
     }
 
-    pub fn asks(&self) -> &Vec<Offer> {
-        &self.asks
+    pub fn asks<'a>(&'a self) -> Box<Iterator<Item=&'a Offer> + 'a> {
+        Box::new(self.asks.iter())
     }
 
     pub fn remove(&mut self, side: Side, offer: Offer) {

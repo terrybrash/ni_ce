@@ -13,7 +13,8 @@ use api::{
 };
 use crate as ccex;
 use chrono::{Utc};
-use decimal::{d128};
+use rust_decimal::Decimal as d128;
+use num_traits::*;
 use hex;
 use hmac::{Hmac, Mac};
 use serde::de::{DeserializeOwned};
@@ -25,6 +26,7 @@ use url::Url;
 use std::collections::HashMap;
 use std::convert::{TryFrom, TryInto};
 use failure::{Fail, err_msg, Error, ResultExt};
+use std::time::Duration;
 
 #[derive(Debug, Hash, PartialEq, PartialOrd, Eq, Ord, Clone, Deserialize, Serialize)]
 pub struct Credential {
@@ -48,10 +50,9 @@ impl TryFrom<ccex::CurrencyPair> for CurrencyPair {
 	}
 }
 
-impl TryFrom<CurrencyPair> for ccex::CurrencyPair {
-	type Error = CurrencyConversionError;
-	fn try_from(CurrencyPair(base, quote): CurrencyPair) -> Result<Self, Self::Error> {
-		Ok(ccex::CurrencyPair(base.try_into()?, quote.try_into()?))
+impl From<CurrencyPair> for ccex::CurrencyPair {
+	fn from(CurrencyPair(base, quote): CurrencyPair) -> Self {
+		ccex::CurrencyPair(base.into(), quote.into())
 	}
 }
 
@@ -127,7 +128,7 @@ impl FromStr for Currency {
 			("ZEC", Currency::ZEC),
 		];
 
-		for &(string, currency) in &currencies {
+		for &(string, currency) in currencies.iter() {
 			if string.eq_ignore_ascii_case(s) {
 				return Ok(currency);
 			}
@@ -143,30 +144,27 @@ impl Display for Currency {
 }
 
 
-impl TryFrom<Currency> for ccex::Currency {
-	type Error = CurrencyConversionError;
-
-	fn try_from(currency: Currency) -> Result<Self, Self::Error> {
+impl From<Currency> for ccex::Currency {
+	fn from(currency: Currency) -> Self {
 		match currency {
-			Currency::BCH => Ok(ccex::Currency::BCH),
-			Currency::BTC => Ok(ccex::Currency::BTC),
-			Currency::DASH => Ok(ccex::Currency::DASH),
-			Currency::DOGE => Ok(ccex::Currency::DOGE),
-			Currency::ETC => Ok(ccex::Currency::ETC),
-			Currency::ETH => Ok(ccex::Currency::ETH),
-			Currency::EUR => Ok(ccex::Currency::EUR),
-			Currency::KICK => Ok(ccex::Currency::KICK),
-			Currency::LTC => Ok(ccex::Currency::LTC),
-			Currency::PLN => Ok(ccex::Currency::PLN),
-			Currency::RUB => Ok(ccex::Currency::RUB),
-			Currency::UAH => Ok(ccex::Currency::UAH),
-			Currency::USD => Ok(ccex::Currency::USD),
-			Currency::USDT => Ok(ccex::Currency::USDT),
-			Currency::WAVES => Ok(ccex::Currency::WAVES),
-			Currency::XMR => Ok(ccex::Currency::XMR),
-			Currency::XRP => Ok(ccex::Currency::XRP),
-			Currency::ZEC => Ok(ccex::Currency::ZEC),
-		    currency => Err(CurrencyConversionError::UnsupportedCurrency(currency.to_string())),
+			Currency::BCH => ccex::Currency::BCH,
+			Currency::BTC => ccex::Currency::BTC,
+			Currency::DASH => ccex::Currency::DASH,
+			Currency::DOGE => ccex::Currency::DOGE,
+			Currency::ETC => ccex::Currency::ETC,
+			Currency::ETH => ccex::Currency::ETH,
+			Currency::EUR => ccex::Currency::EUR,
+			Currency::KICK => ccex::Currency::KICK,
+			Currency::LTC => ccex::Currency::LTC,
+			Currency::PLN => ccex::Currency::PLN,
+			Currency::RUB => ccex::Currency::RUB,
+			Currency::UAH => ccex::Currency::UAHPAY,
+			Currency::USD => ccex::Currency::USD,
+			Currency::USDT => ccex::Currency::USDT,
+			Currency::WAVES => ccex::Currency::WAVES,
+			Currency::XMR => ccex::Currency::XMR,
+			Currency::XRP => ccex::Currency::XRP,
+			Currency::ZEC => ccex::Currency::ZEC,
 		}
 	}
 }
@@ -187,7 +185,7 @@ impl TryFrom<ccex::Currency> for Currency {
 			ccex::Currency::LTC => Ok(Currency::LTC),
 			ccex::Currency::PLN => Ok(Currency::PLN),
 			ccex::Currency::RUB => Ok(Currency::RUB),
-			ccex::Currency::UAH => Ok(Currency::UAH),
+			ccex::Currency::UAHPAY => Ok(Currency::UAH),
 			ccex::Currency::USD => Ok(Currency::USD),
 			ccex::Currency::USDT => Ok(Currency::USDT),
 			ccex::Currency::WAVES => Ok(Currency::WAVES),
@@ -443,6 +441,28 @@ where Client: HttpClient {
 
 impl<Client> ccex::RestExchange for Exmo<Client>
 where Client: HttpClient {
+	fn name(&self) -> &'static str {
+		"Exmo"
+	}
+
+	fn orderbook_cooldown(&self) -> Duration {
+		Duration::from_millis(750)
+	}
+
+	fn maker_fee(&self) -> d128 {
+		// 0.02% / 0.002
+		d128::new(2, 3)
+	}
+
+	fn taker_fee(&self) -> d128 {
+		// 0.02% / 0.002
+		d128::new(2, 3)
+	}
+
+	fn precision(&self) -> u32 {
+		8
+	}
+
 	fn balances(&mut self) -> Result<Vec<ccex::Balance>, Error> {
 		let request = GetUserInfo {
 			nonce: nonce(),
@@ -455,12 +475,9 @@ where Client: HttpClient {
 					Ok(currency) => Some((currency, balance)),
 					Err(ParseCurrencyError::InvalidOrUnsupportedCurrency(currency)) => None,
 				}
-			}).filter_map(|(currency, balance)| {
-				match ccex::Currency::try_from(currency) {
-					Ok(currency) => Some((currency, balance)),
-					Err(CurrencyConversionError::UnsupportedCurrency(currency)) => None,
-				}
-			}).map(|(currency, balance)| ccex::Balance::new(currency, balance))
+			})
+			.map(|(currency, balance)| (ccex::Currency::from(currency), balance))
+			.map(|(currency, balance)| ccex::Balance::new(currency, balance))
 			.collect();
 		Ok(balances)
 	}
@@ -526,4 +543,139 @@ where Client: HttpClient {
 
     	Err(format_err!("no orderbook"))
     }
+
+    fn min_quantity(&self, product: ccex::CurrencyPair) -> Option<d128> {
+    	match product {
+			ccex::CurrencyPair(ccex::Currency::BTC, ccex::Currency::USD) => Some(d128::new(1, 3)),
+			ccex::CurrencyPair(ccex::Currency::BTC, ccex::Currency::EUR) => Some(d128::new(1, 3)),
+			ccex::CurrencyPair(ccex::Currency::BTC, ccex::Currency::RUB) => Some(d128::new(1, 3)),
+			ccex::CurrencyPair(ccex::Currency::BTC, ccex::Currency::UAHPAY) => Some(d128::new(1, 3)),
+			ccex::CurrencyPair(ccex::Currency::BTC, ccex::Currency::PLN) => Some(d128::new(1, 3)),
+			ccex::CurrencyPair(ccex::Currency::BCH, ccex::Currency::BTC) => Some(d128::new(3, 3)),
+			ccex::CurrencyPair(ccex::Currency::BCH, ccex::Currency::USD) => Some(d128::new(3, 3)),
+			ccex::CurrencyPair(ccex::Currency::BCH, ccex::Currency::RUB) => Some(d128::new(3, 3)),
+			ccex::CurrencyPair(ccex::Currency::BCH, ccex::Currency::ETH) => Some(d128::new(3, 3)),
+			ccex::CurrencyPair(ccex::Currency::DASH, ccex::Currency::BTC) => Some(d128::new(1, 2)),
+			ccex::CurrencyPair(ccex::Currency::DASH, ccex::Currency::USD) => Some(d128::new(1, 2)),
+			ccex::CurrencyPair(ccex::Currency::DASH, ccex::Currency::RUB) => Some(d128::new(1, 2)),
+			ccex::CurrencyPair(ccex::Currency::ETH, ccex::Currency::BTC) => Some(d128::new(1, 2)),
+			ccex::CurrencyPair(ccex::Currency::ETH, ccex::Currency::LTC) => Some(d128::new(1, 2)),
+			ccex::CurrencyPair(ccex::Currency::ETH, ccex::Currency::USD) => Some(d128::new(1, 2)),
+			ccex::CurrencyPair(ccex::Currency::ETH, ccex::Currency::EUR) => Some(d128::new(1, 2)),
+			ccex::CurrencyPair(ccex::Currency::ETH, ccex::Currency::RUB) => Some(d128::new(1, 2)),
+			ccex::CurrencyPair(ccex::Currency::ETH, ccex::Currency::UAHPAY) => Some(d128::new(1, 2)),
+			ccex::CurrencyPair(ccex::Currency::ETH, ccex::Currency::PLN) => Some(d128::new(1, 3)),
+			ccex::CurrencyPair(ccex::Currency::ETC, ccex::Currency::BTC) => Some(d128::new(2, 1)),
+			ccex::CurrencyPair(ccex::Currency::ETC, ccex::Currency::USD) => Some(d128::new(2, 1)),
+			ccex::CurrencyPair(ccex::Currency::ETC, ccex::Currency::RUB) => Some(d128::new(2, 1)),
+			ccex::CurrencyPair(ccex::Currency::LTC, ccex::Currency::BTC) => Some(d128::new(5, 2)),
+			ccex::CurrencyPair(ccex::Currency::LTC, ccex::Currency::USD) => Some(d128::new(5, 2)),
+			ccex::CurrencyPair(ccex::Currency::LTC, ccex::Currency::EUR) => Some(d128::new(5, 2)),
+			ccex::CurrencyPair(ccex::Currency::LTC, ccex::Currency::RUB) => Some(d128::new(5, 2)),
+			ccex::CurrencyPair(ccex::Currency::ZEC, ccex::Currency::BTC) => Some(d128::new(1, 2)),
+			ccex::CurrencyPair(ccex::Currency::ZEC, ccex::Currency::USD) => Some(d128::new(1, 2)),
+			ccex::CurrencyPair(ccex::Currency::ZEC, ccex::Currency::EUR) => Some(d128::new(1, 2)),
+			ccex::CurrencyPair(ccex::Currency::ZEC, ccex::Currency::RUB) => Some(d128::new(1, 2)),
+			ccex::CurrencyPair(ccex::Currency::XRP, ccex::Currency::BTC) => Some(d128::new(1, 1)),
+			ccex::CurrencyPair(ccex::Currency::XRP, ccex::Currency::USD) => Some(d128::new(15, 0)),
+			ccex::CurrencyPair(ccex::Currency::XRP, ccex::Currency::RUB) => Some(d128::new(15, 0)),
+			ccex::CurrencyPair(ccex::Currency::XMR, ccex::Currency::BTC) => Some(d128::new(3, 2)),
+			ccex::CurrencyPair(ccex::Currency::XMR, ccex::Currency::USD) => Some(d128::new(3, 2)),
+			ccex::CurrencyPair(ccex::Currency::XMR, ccex::Currency::EUR) => Some(d128::new(3, 2)),
+			ccex::CurrencyPair(ccex::Currency::BTC, ccex::Currency::USDT) => Some(d128::new(1, 3)),
+			ccex::CurrencyPair(ccex::Currency::ETH, ccex::Currency::USDT) => Some(d128::new(1, 2)),
+			ccex::CurrencyPair(ccex::Currency::USDT, ccex::Currency::USD) => Some(d128::new(3, 0)),
+			ccex::CurrencyPair(ccex::Currency::USDT, ccex::Currency::RUB) => Some(d128::new(3, 0)),
+			ccex::CurrencyPair(ccex::Currency::USD, ccex::Currency::RUB) => Some(d128::new(3, 0)),
+			ccex::CurrencyPair(ccex::Currency::DOGE, ccex::Currency::BTC) => Some(d128::new(100, 0)),
+			ccex::CurrencyPair(ccex::Currency::WAVES, ccex::Currency::BTC) => Some(d128::new(5, 1)),
+			ccex::CurrencyPair(ccex::Currency::WAVES, ccex::Currency::RUB) => Some(d128::new(5, 1)),
+			ccex::CurrencyPair(ccex::Currency::KICK, ccex::Currency::BTC) => Some(d128::new(100, 0)),
+			ccex::CurrencyPair(ccex::Currency::KICK, ccex::Currency::ETH) => Some(d128::new(100, 0)),
+			_ => None,
+    	}
+    }
+}
+
+#[cfg(test)]
+mod bench {
+	use super::*;
+	use test::Bencher;
+	use reqwest;
+	use RestExchange;
+
+	#[bench]
+	fn new_client(b: &mut Bencher) {
+		b.iter(|| {
+			Exmo {
+				credential: Credential {
+					key: String::new(),
+					secret: String::new(),
+				},
+				host: Url::parse("http://google.com").unwrap(),
+				client: reqwest::Client::new(),
+			}
+		})
+	}
+
+	#[bench]
+	fn min_quantity(b: &mut Bencher) {
+		let client = Exmo {
+			credential: Credential {
+				key: String::new(),
+				secret: String::new(),
+			},
+			host: Url::parse("http://google.com").unwrap(),
+			client: reqwest::Client::new(),
+		};
+		let mut products = [
+			ccex::CurrencyPair(ccex::Currency::BTC, ccex::Currency::USD),
+			ccex::CurrencyPair(ccex::Currency::BTC, ccex::Currency::EUR),
+			ccex::CurrencyPair(ccex::Currency::BTC, ccex::Currency::RUB),
+			ccex::CurrencyPair(ccex::Currency::BTC, ccex::Currency::UAHPAY),
+			ccex::CurrencyPair(ccex::Currency::BTC, ccex::Currency::PLN),
+			ccex::CurrencyPair(ccex::Currency::BCH, ccex::Currency::BTC),
+			ccex::CurrencyPair(ccex::Currency::BCH, ccex::Currency::USD),
+			ccex::CurrencyPair(ccex::Currency::BCH, ccex::Currency::RUB),
+			ccex::CurrencyPair(ccex::Currency::BCH, ccex::Currency::ETH),
+			ccex::CurrencyPair(ccex::Currency::DASH, ccex::Currency::BTC),
+			ccex::CurrencyPair(ccex::Currency::DASH, ccex::Currency::USD),
+			ccex::CurrencyPair(ccex::Currency::DASH, ccex::Currency::RUB),
+			ccex::CurrencyPair(ccex::Currency::ETH, ccex::Currency::BTC),
+			ccex::CurrencyPair(ccex::Currency::ETH, ccex::Currency::LTC),
+			ccex::CurrencyPair(ccex::Currency::ETH, ccex::Currency::USD),
+			ccex::CurrencyPair(ccex::Currency::ETH, ccex::Currency::EUR),
+			ccex::CurrencyPair(ccex::Currency::ETH, ccex::Currency::RUB),
+			ccex::CurrencyPair(ccex::Currency::ETH, ccex::Currency::UAHPAY),
+			ccex::CurrencyPair(ccex::Currency::ETH, ccex::Currency::PLN),
+			ccex::CurrencyPair(ccex::Currency::ETC, ccex::Currency::BTC),
+			ccex::CurrencyPair(ccex::Currency::ETC, ccex::Currency::USD),
+			ccex::CurrencyPair(ccex::Currency::ETC, ccex::Currency::RUB),
+			ccex::CurrencyPair(ccex::Currency::LTC, ccex::Currency::BTC),
+			ccex::CurrencyPair(ccex::Currency::LTC, ccex::Currency::USD),
+			ccex::CurrencyPair(ccex::Currency::LTC, ccex::Currency::EUR),
+			ccex::CurrencyPair(ccex::Currency::LTC, ccex::Currency::RUB),
+			ccex::CurrencyPair(ccex::Currency::ZEC, ccex::Currency::BTC),
+			ccex::CurrencyPair(ccex::Currency::ZEC, ccex::Currency::USD),
+			ccex::CurrencyPair(ccex::Currency::ZEC, ccex::Currency::EUR),
+			ccex::CurrencyPair(ccex::Currency::ZEC, ccex::Currency::RUB),
+			ccex::CurrencyPair(ccex::Currency::XRP, ccex::Currency::BTC),
+			ccex::CurrencyPair(ccex::Currency::XRP, ccex::Currency::USD),
+			ccex::CurrencyPair(ccex::Currency::XRP, ccex::Currency::RUB),
+			ccex::CurrencyPair(ccex::Currency::XMR, ccex::Currency::BTC),
+			ccex::CurrencyPair(ccex::Currency::XMR, ccex::Currency::USD),
+			ccex::CurrencyPair(ccex::Currency::XMR, ccex::Currency::EUR),
+			ccex::CurrencyPair(ccex::Currency::BTC, ccex::Currency::USDT),
+			ccex::CurrencyPair(ccex::Currency::ETH, ccex::Currency::USDT),
+			ccex::CurrencyPair(ccex::Currency::USDT, ccex::Currency::USD),
+			ccex::CurrencyPair(ccex::Currency::USDT, ccex::Currency::RUB),
+			ccex::CurrencyPair(ccex::Currency::USD, ccex::Currency::RUB),
+			ccex::CurrencyPair(ccex::Currency::DOGE, ccex::Currency::BTC),
+			ccex::CurrencyPair(ccex::Currency::WAVES, ccex::Currency::BTC),
+			ccex::CurrencyPair(ccex::Currency::WAVES, ccex::Currency::RUB),
+			ccex::CurrencyPair(ccex::Currency::KICK, ccex::Currency::BTC),
+			ccex::CurrencyPair(ccex::Currency::KICK, ccex::Currency::ETH),
+		].into_iter().cycle();
+		b.iter(|| client.min_quantity(products.next().unwrap().clone()));
+	}
 }
