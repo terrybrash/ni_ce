@@ -1,32 +1,37 @@
+use crate as ccex;
+use {Exchange, AsyncExchangeRestClient, SyncExchangeRestClient, Future, dual_channel};
+
 use api::{
 	Header,
 	Headers,
 	HttpClient,
 	HttpResponse,
 	Method,
+	Query,
 	NeedsAuthentication,
 	Payload,
 	PrivateRequest,
-	Query,
 	QueryBuilder,
 	RestResource,
 };
-use crate as ccex;
 use chrono::{Utc};
-use rust_decimal::Decimal as d128;
-use num_traits::*;
 use failure::{Error, ResultExt};
 use hex;
 use hmac::{Hmac, Mac};
+use num_traits::*;
+use rust_decimal::Decimal as d128;
 use serde::de::{DeserializeOwned};
 use serde_json;
 use sha2::{Sha512};
-use std::fmt::{self, Display, Formatter};
-use std::str::{FromStr};
-use url::Url;
 use std::collections::HashMap;
 use std::convert::{TryFrom, TryInto};
+use std::fmt::{self, Display, Formatter};
+use std::str::{FromStr};
 use std::time::Duration;
+use url::Url;
+use std::cell::RefCell;
+use std::sync::mpsc;
+use std::thread::{self, JoinHandle};
 
 #[derive(Debug, Hash, PartialEq, PartialOrd, Eq, Ord, Clone, Deserialize, Serialize)]
 pub struct Credential {
@@ -385,7 +390,7 @@ impl From<Currency> for ccex::Currency {
 impl FromStr for Currency {
 	type Err = Error;
 	fn from_str(s: &str) -> Result<Self, Self::Err> {
-		const currencies: [(&'static str, Currency); 79] = [
+		const CURRENCIES: [(&'static str, Currency); 79] = [
 			("ADX", Currency::ADX),
 			("AE", Currency::AE),
 			("AION", Currency::AION),
@@ -467,7 +472,7 @@ impl FromStr for Currency {
 			("ZRX", Currency::ZRX),
         ];
 
-        for &(string, currency) in currencies.iter() {
+        for &(string, currency) in CURRENCIES.iter() {
             if string.eq_ignore_ascii_case(s) {
                 return Ok(currency);
             }
@@ -781,22 +786,18 @@ pub fn nonce() -> u32 {
 }
 
 #[derive(Debug, Clone)]
-pub struct Liqui<Client>
-where Client: HttpClient {
+pub struct Liqui {
     pub credential: Credential,
-    pub host: Url,
-    pub client: Client,
 }
 
-
-impl<Client> ccex::RestExchange for Liqui<Client>
+impl<Client> Exchange<Client> for Liqui
 where Client: HttpClient {
 	fn name(&self) -> &'static str {
 		"Liqui"
 	}
 
 	fn orderbook_cooldown(&self) -> Duration {
-		Duration::from_millis(2150)
+		Duration::from_millis(2010)
 	}
 
 	fn maker_fee(&self) -> d128 {
@@ -812,114 +813,6 @@ where Client: HttpClient {
 	fn precision(&self) -> u32 {
 		8
 	}
-
-    fn balances(&mut self) -> Result<Vec<ccex::Balance>, Error> {
-        let request = GetInfo {
-            nonce: nonce(),
-        }.authenticate(&self.credential);
-        let response = self.client.send(&self.host, request)?;
-
-        let mut balances = Vec::with_capacity(10);
-        for (currency, amount) in response.funds {
-        	let currency: Result<Currency, Error> = currency.parse();
-        	if let Ok(currency) = currency {
-        		balances.push(ccex::Balance::new(currency.try_into().unwrap(), d128::from_f64(amount).unwrap()));
-        	}
-        }
-        Ok(balances)
-    }
-
-    fn orderbook(&mut self, product: ccex::CurrencyPair) -> Result<ccex::Orderbook, Error> {
-    	let product = CurrencyPair::try_from(product)?.to_string();
-	    let request = GetDepth {
-	    	product: product.clone()
-	    };
-	    let mut response = self.client.send(&self.host, request)?;
-
-	    let liqui_orderbook = match response.remove(&product) {
-	    	Some(orderbook) => orderbook,
-	    	None => panic!(),
-	    };
-
-	    let capacity = Ord::max(liqui_orderbook.asks.len(), liqui_orderbook.bids.len());
-	    let mut orderbook = ccex::Orderbook::with_capacity(capacity);
-	    for (price, amount) in liqui_orderbook.bids.into_iter() {
-	    	let price = d128::from_f64(price).unwrap();
-	    	let amount = d128::from_f64(amount).unwrap();
-	    	orderbook.add_or_update_bid(ccex::Offer::new(price, amount));
-	    }
-	    for (price, amount) in liqui_orderbook.asks.into_iter() {
-	    	let price = d128::from_f64(price).unwrap();
-	    	let amount = d128::from_f64(amount).unwrap();
-	    	orderbook.add_or_update_ask(ccex::Offer::new(price, amount));
-	    }
-	    Ok(orderbook)
-	}
-
-    fn place_order(&mut self, order: ccex::NewOrder) -> Result<ccex::Order, Error> {
-    	let (price, quantity) = match order.instruction {
-    		ccex::NewOrderInstruction::Limit {price, quantity, ..} => (price, quantity),
-    		instruction => unimplemented!("liqui doesn't support {:?}", instruction),
-    	};
-
-    	let request = PlaceOrder {
-    		pair: order.product.try_into()?,
-    		side: order.side.into(),
-    		rate: price.clone(),
-    		amount: quantity,
-    		nonce: nonce(),
-    	};
-		let request = request.authenticate(&self.credential);
-		let response = self.client.send(&self.host, request).unwrap();
-
-		let order = ccex::Order {
-			id: Some(order.id),
-			server_id: Some(response.order_id.to_string()),
-			side: order.side,
-			product: order.product,
-			status: ccex::OrderStatus::Open,
-			instruction: ccex::OrderInstruction::Limit {
-				price: price,
-				original_quantity: d128::from_f64(response.received).unwrap() + d128::from_f64(response.remains).unwrap(),
-				remaining_quantity: d128::from_f64(response.remains).unwrap(),
-				time_in_force: ccex::TimeInForce::GoodTillCancelled,
-			}
-		};
-		Ok(order)
-    }
-
-    fn orders(&mut self, product: ccex::CurrencyPair) -> Result<Vec<ccex::Order>, Error> {
-    	let request = GetActiveOrders {
-    		pair: product.try_into()?,
-    		nonce: nonce(),
-    	};
-    	let request = request.authenticate(&self.credential);
-    	let response = self.client.send(&self.host, request)?;
-
-    	// let response = match response {
-    	// 	serde_json::Value::Object(response) => response,
-    	// 	value => panic!("expected a serde_json::Value::Object; but got {:?}", value)
-    	// };
-
-    	let mut orders = Vec::with_capacity(response.len());
-    	for (id, order) in response.into_iter() {
-    		let order = ccex::Order {
-    			id: None,
-    			server_id: Some(id),
-    			side: order.side.into(),
-    			product: order.pair.parse::<CurrencyPair>()?.try_into()?,
-    			status: ccex::OrderStatus::Open,
-    			instruction: ccex::OrderInstruction::Limit {
-    				price: d128::from_f64(order.rate).unwrap(),
-    				original_quantity: d128::zero(),
-    				remaining_quantity: d128::from_f64(order.amount).unwrap(),
-    				time_in_force: ccex::TimeInForce::GoodTillCancelled,
-    			}
-    		};
-    		orders.push(order);
-    	}
-    	Ok(orders)
-    }
 
 	fn min_quantity(&self, product: ccex::CurrencyPair) -> Option<d128> {
 		match product {
@@ -1138,6 +1031,235 @@ where Client: HttpClient {
 			ccex::CurrencyPair(ccex::Currency::AION, ccex::Currency::ETH) => Some(d128::new(1, 8)),
 			ccex::CurrencyPair(ccex::Currency::AION, ccex::Currency::USDT) => Some(d128::new(1, 8)),
 			_ => None,
+		}
+	}
+
+	fn sync_rest_client(&self) -> Box<SyncExchangeRestClient> {
+		Box::new(SyncLiquiRestClient {
+			credential: self.credential.clone(),
+			host: Url::parse("https://api.liqui.io").unwrap(),
+			client: Client::new(),
+		})
+	}
+
+	fn async_rest_client(&self) -> Box<AsyncExchangeRestClient> {
+		let sync_client = SyncLiquiRestClient {
+			credential: self.credential.clone(),
+			host: Url::parse("https://api.liqui.io").unwrap(),
+			client: Client::new(),
+		};
+		let async_client = AsyncLiquiRestClient::from(sync_client);
+		Box::new(async_client)
+	}
+}
+
+#[derive(Debug, Clone)]
+pub struct SyncLiquiRestClient<Client>
+where Client: HttpClient {
+	pub credential: Credential,
+	pub host: Url,
+	pub client: Client,
+}
+
+impl<Client> SyncExchangeRestClient for SyncLiquiRestClient<Client>
+where Client: HttpClient {
+    fn balances(&mut self) -> Result<Vec<ccex::Balance>, Error> {
+        let request = GetInfo {
+            nonce: nonce(),
+        }.authenticate(&self.credential);
+        let response = self.client.send(&self.host, request)?;
+
+        let mut balances = Vec::with_capacity(10);
+        for (currency, amount) in response.funds {
+        	let currency: Result<Currency, Error> = currency.parse();
+        	if let Ok(currency) = currency {
+        		balances.push(ccex::Balance::new(currency.try_into().unwrap(), d128::from_f64(amount).unwrap()));
+        	}
+        }
+        Ok(balances)
+    }
+
+    fn orderbook(&mut self, product: ccex::CurrencyPair) -> Result<ccex::Orderbook, Error> {
+    	let product = CurrencyPair::try_from(product)?.to_string();
+	    let request = GetDepth {
+	    	product: product.clone()
+	    };
+	    let mut response = self.client.send(&self.host, request)?;
+
+	    let liqui_orderbook = match response.remove(&product) {
+	    	Some(orderbook) => orderbook,
+	    	None => panic!(),
+	    };
+
+	    let capacity = Ord::max(liqui_orderbook.asks.len(), liqui_orderbook.bids.len());
+	    let mut orderbook = ccex::Orderbook::with_capacity(capacity);
+	    for (price, amount) in liqui_orderbook.bids.into_iter() {
+	    	let price = d128::from_f64(price).unwrap();
+	    	let amount = d128::from_f64(amount).unwrap();
+	    	orderbook.add_or_update_bid(ccex::Offer::new(price, amount));
+	    }
+	    for (price, amount) in liqui_orderbook.asks.into_iter() {
+	    	let price = d128::from_f64(price).unwrap();
+	    	let amount = d128::from_f64(amount).unwrap();
+	    	orderbook.add_or_update_ask(ccex::Offer::new(price, amount));
+	    }
+	    Ok(orderbook)
+	}
+
+    fn place_order(&mut self, order: ccex::NewOrder) -> Result<ccex::Order, Error> {
+    	let (price, quantity) = match order.instruction {
+    		ccex::NewOrderInstruction::Limit {price, quantity, ..} => (price, quantity),
+    		instruction => unimplemented!("liqui doesn't support {:?}", instruction),
+    	};
+
+    	let request = PlaceOrder {
+    		pair: order.product.try_into()?,
+    		side: order.side.into(),
+    		rate: price.clone(),
+    		amount: quantity,
+    		nonce: nonce(),
+    	};
+		let request = request.authenticate(&self.credential);
+		let response = self.client.send(&self.host, request).unwrap();
+
+		let order = ccex::Order {
+			id: Some(order.id),
+			server_id: Some(response.order_id.to_string()),
+			side: order.side,
+			product: order.product,
+			status: ccex::OrderStatus::Open,
+			instruction: ccex::OrderInstruction::Limit {
+				price: price,
+				original_quantity: d128::from_f64(response.received).unwrap() + d128::from_f64(response.remains).unwrap(),
+				remaining_quantity: d128::from_f64(response.remains).unwrap(),
+				time_in_force: ccex::TimeInForce::GoodTillCancelled,
+			}
+		};
+		Ok(order)
+    }
+
+    fn orders(&mut self, product: ccex::CurrencyPair) -> Result<Vec<ccex::Order>, Error> {
+    	let request = GetActiveOrders {
+    		pair: product.try_into()?,
+    		nonce: nonce(),
+    	};
+    	let request = request.authenticate(&self.credential);
+    	let response = self.client.send(&self.host, request)?;
+
+    	// let response = match response {
+    	// 	serde_json::Value::Object(response) => response,
+    	// 	value => panic!("expected a serde_json::Value::Object; but got {:?}", value)
+    	// };
+
+    	let mut orders = Vec::with_capacity(response.len());
+    	for (id, order) in response.into_iter() {
+    		let order = ccex::Order {
+    			id: None,
+    			server_id: Some(id),
+    			side: order.side.into(),
+    			product: order.pair.parse::<CurrencyPair>()?.try_into()?,
+    			status: ccex::OrderStatus::Open,
+    			instruction: ccex::OrderInstruction::Limit {
+    				price: d128::from_f64(order.rate).unwrap(),
+    				original_quantity: d128::zero(),
+    				remaining_quantity: d128::from_f64(order.amount).unwrap(),
+    				time_in_force: ccex::TimeInForce::GoodTillCancelled,
+    			}
+    		};
+    		orders.push(order);
+    	}
+    	Ok(orders)
+    }
+}
+
+pub struct AsyncLiquiRestClient {
+	pub threads: Vec<JoinHandle<()>>,
+	pub orderbook_channel:		RefCell<(mpsc::Sender<ccex::CurrencyPair>, 	mpsc::Receiver<Result<ccex::Orderbook, Error>>)>,
+	pub place_order_channel: 	RefCell<(mpsc::Sender<ccex::NewOrder>, 		mpsc::Receiver<Result<ccex::Order, Error>>)>,
+	pub balances_channel: 		RefCell<(mpsc::Sender<()>, 					mpsc::Receiver<Result<Vec<ccex::Balance>, Error>>)>,
+}
+
+impl AsyncExchangeRestClient for AsyncLiquiRestClient {
+	fn balances<'a>(&'a self) -> Future<'a, Result<Vec<ccex::Balance>, Error>> {
+		let (ref mut sender, _) = *self.balances_channel.borrow_mut();
+		sender.send(()).unwrap();
+
+		Future::new(move || {
+			let (_, ref mut receiver) = *self.balances_channel.borrow_mut();
+			receiver.recv().unwrap()
+		})
+	}
+
+	fn orderbook<'a>(&'a self, product: ccex::CurrencyPair) -> Future<'a, Result<ccex::Orderbook, Error>> {
+		let (ref mut sender, _) = *self.orderbook_channel.borrow_mut();
+		sender.send(product).unwrap();
+
+		Future::new(move || {
+			let (_, ref receiver) = *self.orderbook_channel.borrow_mut();
+			receiver.recv().unwrap()
+		})
+	}
+
+	fn orders<'a>(&'a self, product: ccex::CurrencyPair) -> Future<'a, Result<Vec<ccex::Order>, Error>> {
+		unimplemented!()
+	}
+
+	fn place_order<'a>(&'a self, new_order: ccex::NewOrder) -> Future<'a, Result<ccex::Order, Error>> {
+		let (ref mut sender, _) = *self.place_order_channel.borrow_mut();
+		sender.send(new_order).unwrap();
+
+		Future::new(move || {
+			let (_, ref mut receiver) = *self.place_order_channel.borrow_mut();
+			receiver.recv().unwrap()
+		})
+	}
+}
+
+impl<Client> From<SyncLiquiRestClient<Client>> for AsyncLiquiRestClient
+where Client: HttpClient {
+	fn from(client: SyncLiquiRestClient<Client>) -> Self {
+		let (orderbook_channel, worker_orderbook_channel) = dual_channel();
+		let orderbook_thread = {
+			let mut client = client.clone();
+			let (mut sender, mut receiver) = worker_orderbook_channel;
+			thread::spawn(move || {
+				for product in receiver.iter() {
+					sender.send(client.orderbook(product)).unwrap();
+				}
+			})
+		};
+
+		let (place_order_channel, worker_place_order_channel) = dual_channel();
+		let place_order_thread = {
+			let mut client = client.clone();
+			let (mut sender, mut receiver) = worker_place_order_channel;
+			thread::spawn(move || {
+				for new_order in receiver.iter() {
+					sender.send(client.place_order(new_order)).unwrap();
+				}
+			})
+		};
+
+		let (balances_channel, worker_balances_channel) = dual_channel();
+		let balances_thread = {
+			let mut client = client.clone();
+			let (mut sender, mut receiver) = worker_balances_channel;
+			thread::spawn(move || {
+				for _ in receiver.iter() {
+					sender.send(client.balances()).unwrap();
+				}
+			})
+		};
+
+		AsyncLiquiRestClient {
+			orderbook_channel: RefCell::new(orderbook_channel),
+			place_order_channel: RefCell::new(place_order_channel),
+			balances_channel: RefCell::new(balances_channel),
+			threads: vec![
+				orderbook_thread,
+				place_order_thread,
+				balances_thread,
+			],
 		}
 	}
 }

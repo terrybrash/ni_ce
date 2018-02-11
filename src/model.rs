@@ -135,7 +135,7 @@ pub struct ParseCurrencyError(String);
 impl FromStr for Currency {
     type Err = ParseCurrencyError;
     fn from_str(s: &str) -> Result<Self, Self::Err> {
-        const currencies: [(&'static str, Currency); 92] = [
+        const CURRENCIES: [(&'static str, Currency); 92] = [
             ("ADX", Currency::ADX),
             ("AE", Currency::AE),
             ("AION", Currency::AION),
@@ -230,7 +230,7 @@ impl FromStr for Currency {
             ("ZRX", Currency::ZRX),
         ];
 
-        for &(string, currency) in currencies.iter() {
+        for &(string, currency) in CURRENCIES.iter() {
             if string.eq_ignore_ascii_case(s) {
                 return Ok(currency);
             }

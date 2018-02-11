@@ -14,7 +14,6 @@ use api::{
 use crate as ccex;
 use chrono::{Utc};
 use rust_decimal::Decimal as d128;
-use num_traits::*;
 use hex;
 use hmac::{Hmac, Mac};
 use serde::de::{DeserializeOwned};
@@ -25,8 +24,12 @@ use std::str::{FromStr};
 use url::Url;
 use std::collections::HashMap;
 use std::convert::{TryFrom, TryInto};
-use failure::{Fail, err_msg, Error, ResultExt};
+use failure::{err_msg, Error, ResultExt};
 use std::time::Duration;
+use std::thread::{self, JoinHandle};
+use std::sync::mpsc;
+use {AsyncExchangeRestClient, SyncExchangeRestClient, Exchange, Future, dual_channel};
+use std::cell::RefCell;
 
 #[derive(Debug, Hash, PartialEq, PartialOrd, Eq, Ord, Clone, Deserialize, Serialize)]
 pub struct Credential {
@@ -107,7 +110,7 @@ impl FromStr for Currency {
 	type Err = ParseCurrencyError;
 
 	fn from_str(s: &str) -> Result<Self, Self::Err> {
-		const currencies: [(&'static str, Currency); 18] = [
+		const CURRENCIES: [(&'static str, Currency); 18] = [
 			("BCH", Currency::BCH),
 			("BTC", Currency::BTC),
 			("DASH", Currency::DASH),
@@ -128,7 +131,7 @@ impl FromStr for Currency {
 			("ZEC", Currency::ZEC),
 		];
 
-		for &(string, currency) in currencies.iter() {
+		for &(string, currency) in CURRENCIES.iter() {
 			if string.eq_ignore_ascii_case(s) {
 				return Ok(currency);
 			}
@@ -226,7 +229,7 @@ fn deserialize_private_response<T>(response: &HttpResponse) -> Result<T, Error>
 where T: DeserializeOwned {
 	let body = match response.body {
 		Some(Payload::Text(ref body)) => body,
-		Some(Payload::Binary(ref body)) => panic!("expected text"),
+		Some(Payload::Binary(_)) => panic!("expected text"),
 		None => panic!(),
 		// None => Err(format_err!("the body is empty"))?,
 	};
@@ -426,27 +429,22 @@ pub fn nonce() -> u32 {
 	// TODO: switch to a cached nonce at some point. this has the limitations
 	// of 1) only allowing one request per millisecond and 2) expiring after
 	// ~50 days
-	// let now = Utc::now();
-	// (now.timestamp() as u32 - 1517298754u32) * 1000 + now.timestamp_subsec_millis()
-	Utc::now().timestamp() as u32
+	let now = Utc::now();
+	(now.timestamp() as u32 - 1518363415u32) * 1000 + now.timestamp_subsec_millis()
 }
 
-#[derive(Debug, Clone)]
-pub struct Exmo<Client>
-where Client: HttpClient {
+pub struct Exmo {
 	pub credential: Credential,
-	pub host: Url,
-	pub client: Client,
 }
 
-impl<Client> ccex::RestExchange for Exmo<Client>
+impl<Client> Exchange<Client> for Exmo 
 where Client: HttpClient {
 	fn name(&self) -> &'static str {
 		"Exmo"
 	}
 
 	fn orderbook_cooldown(&self) -> Duration {
-		Duration::from_millis(750)
+		Duration::from_millis(800)
 	}
 
 	fn maker_fee(&self) -> d128 {
@@ -462,87 +460,6 @@ where Client: HttpClient {
 	fn precision(&self) -> u32 {
 		8
 	}
-
-	fn balances(&mut self) -> Result<Vec<ccex::Balance>, Error> {
-		let request = GetUserInfo {
-			nonce: nonce(),
-		}.authenticate(&self.credential);
-		let response = self.client.send(&self.host, request)?;
-
-		let balances = response.balances.into_iter()
-			.filter_map(|(currency, balance)| {
-				match currency.parse::<Currency>() {
-					Ok(currency) => Some((currency, balance)),
-					Err(ParseCurrencyError::InvalidOrUnsupportedCurrency(currency)) => None,
-				}
-			})
-			.map(|(currency, balance)| (ccex::Currency::from(currency), balance))
-			.map(|(currency, balance)| ccex::Balance::new(currency, balance))
-			.collect();
-		Ok(balances)
-	}
-
-	fn place_order(&mut self, order: ccex::NewOrder) -> Result<ccex::Order, Error> {
-		let (price, quantity) = match order.instruction {
-			ccex::NewOrderInstruction::Limit {price, quantity, ..} => (price, quantity),
-			_ => return Err(err_msg("only limit orders are supported on exmo")),
-		};
-
-		let request = PlaceOrder {
-			nonce: nonce(),
-			pair: order.product.try_into()?,
-			quantity: quantity,
-			price: price,
-			instruction: match order.side {
-				ccex::Side::Ask => PlaceOrderInstruction::LimitSell,
-				ccex::Side::Bid => PlaceOrderInstruction::LimitBuy,
-			},
-		}.authenticate(&self.credential);
-		let response = self.client.send(&self.host, request)?;
-		Ok(order.into())
-	}
-
-    fn orders(&mut self, product: ccex::CurrencyPair) -> Result<Vec<ccex::Order>, Error> {
-    	unimplemented!();
-    }
-
-    fn orderbook(&mut self, product: ccex::CurrencyPair) -> Result<ccex::Orderbook, Error> {
-    	// exmo has the capability to query multiple orderbooks in one
-    	// request, but for now we're only doing single-orderbook requests
-    	let request = GetOrderbook {
-    		products: vec![product.try_into()?],
-    		limit: 100,
-    	};
-    	let response = self.client.send(&self.host, request)?;
-
-    	let p = product;
-    	for (product, exmo_orderbook) in response.into_iter() {
-    		let product = match product.parse::<CurrencyPair>() {
-    			Ok(product) => product,
-    			Err(_) => continue,
-    		};
-    		let product = match ccex::CurrencyPair::try_from(product) {
-    			Ok(product) => product,
-    			Err(_) => continue,
-    		};
-
-    		if product != p {
-    			continue;
-    		}
-
-    		let capacity = Ord::max(exmo_orderbook.ask.len(), exmo_orderbook.bid.len());
-    		let mut orderbook = ccex::Orderbook::with_capacity(capacity);
-    		for (price, amount, _) in exmo_orderbook.ask.into_iter() {
-    			orderbook.add_or_update_ask(ccex::Offer::new(price, amount));
-    		}
-    		for (price, amount, _) in exmo_orderbook.bid.into_iter() {
-    			orderbook.add_or_update_bid(ccex::Offer::new(price, amount));
-    		}
-    		return Ok(orderbook);
-    	}
-
-    	Err(format_err!("no orderbook"))
-    }
 
     fn min_quantity(&self, product: ccex::CurrencyPair) -> Option<d128> {
     	match product {
@@ -595,87 +512,291 @@ where Client: HttpClient {
 			_ => None,
     	}
     }
-}
 
-#[cfg(test)]
-mod bench {
-	use super::*;
-	use test::Bencher;
-	use reqwest;
-	use RestExchange;
-
-	#[bench]
-	fn new_client(b: &mut Bencher) {
-		b.iter(|| {
-			Exmo {
-				credential: Credential {
-					key: String::new(),
-					secret: String::new(),
-				},
-				host: Url::parse("http://google.com").unwrap(),
-				client: reqwest::Client::new(),
-			}
+	fn sync_rest_client(&self) -> Box<ccex::SyncExchangeRestClient> {
+		Box::new(SyncExmoRestClient {
+			credential: self.credential.clone(),
+			host: Url::parse("https://api.exmo.com").unwrap(),
+			client: Client::new(),
 		})
 	}
 
-	#[bench]
-	fn min_quantity(b: &mut Bencher) {
-		let client = Exmo {
-			credential: Credential {
-				key: String::new(),
-				secret: String::new(),
-			},
-			host: Url::parse("http://google.com").unwrap(),
-			client: reqwest::Client::new(),
+	fn async_rest_client(&self) -> Box<ccex::AsyncExchangeRestClient> {
+		let sync_client = SyncExmoRestClient {
+			credential: self.credential.clone(),
+			host: Url::parse("https://api.exmo.com").unwrap(),
+			client: Client::new(),
 		};
-		let mut products = [
-			ccex::CurrencyPair(ccex::Currency::BTC, ccex::Currency::USD),
-			ccex::CurrencyPair(ccex::Currency::BTC, ccex::Currency::EUR),
-			ccex::CurrencyPair(ccex::Currency::BTC, ccex::Currency::RUB),
-			ccex::CurrencyPair(ccex::Currency::BTC, ccex::Currency::UAHPAY),
-			ccex::CurrencyPair(ccex::Currency::BTC, ccex::Currency::PLN),
-			ccex::CurrencyPair(ccex::Currency::BCH, ccex::Currency::BTC),
-			ccex::CurrencyPair(ccex::Currency::BCH, ccex::Currency::USD),
-			ccex::CurrencyPair(ccex::Currency::BCH, ccex::Currency::RUB),
-			ccex::CurrencyPair(ccex::Currency::BCH, ccex::Currency::ETH),
-			ccex::CurrencyPair(ccex::Currency::DASH, ccex::Currency::BTC),
-			ccex::CurrencyPair(ccex::Currency::DASH, ccex::Currency::USD),
-			ccex::CurrencyPair(ccex::Currency::DASH, ccex::Currency::RUB),
-			ccex::CurrencyPair(ccex::Currency::ETH, ccex::Currency::BTC),
-			ccex::CurrencyPair(ccex::Currency::ETH, ccex::Currency::LTC),
-			ccex::CurrencyPair(ccex::Currency::ETH, ccex::Currency::USD),
-			ccex::CurrencyPair(ccex::Currency::ETH, ccex::Currency::EUR),
-			ccex::CurrencyPair(ccex::Currency::ETH, ccex::Currency::RUB),
-			ccex::CurrencyPair(ccex::Currency::ETH, ccex::Currency::UAHPAY),
-			ccex::CurrencyPair(ccex::Currency::ETH, ccex::Currency::PLN),
-			ccex::CurrencyPair(ccex::Currency::ETC, ccex::Currency::BTC),
-			ccex::CurrencyPair(ccex::Currency::ETC, ccex::Currency::USD),
-			ccex::CurrencyPair(ccex::Currency::ETC, ccex::Currency::RUB),
-			ccex::CurrencyPair(ccex::Currency::LTC, ccex::Currency::BTC),
-			ccex::CurrencyPair(ccex::Currency::LTC, ccex::Currency::USD),
-			ccex::CurrencyPair(ccex::Currency::LTC, ccex::Currency::EUR),
-			ccex::CurrencyPair(ccex::Currency::LTC, ccex::Currency::RUB),
-			ccex::CurrencyPair(ccex::Currency::ZEC, ccex::Currency::BTC),
-			ccex::CurrencyPair(ccex::Currency::ZEC, ccex::Currency::USD),
-			ccex::CurrencyPair(ccex::Currency::ZEC, ccex::Currency::EUR),
-			ccex::CurrencyPair(ccex::Currency::ZEC, ccex::Currency::RUB),
-			ccex::CurrencyPair(ccex::Currency::XRP, ccex::Currency::BTC),
-			ccex::CurrencyPair(ccex::Currency::XRP, ccex::Currency::USD),
-			ccex::CurrencyPair(ccex::Currency::XRP, ccex::Currency::RUB),
-			ccex::CurrencyPair(ccex::Currency::XMR, ccex::Currency::BTC),
-			ccex::CurrencyPair(ccex::Currency::XMR, ccex::Currency::USD),
-			ccex::CurrencyPair(ccex::Currency::XMR, ccex::Currency::EUR),
-			ccex::CurrencyPair(ccex::Currency::BTC, ccex::Currency::USDT),
-			ccex::CurrencyPair(ccex::Currency::ETH, ccex::Currency::USDT),
-			ccex::CurrencyPair(ccex::Currency::USDT, ccex::Currency::USD),
-			ccex::CurrencyPair(ccex::Currency::USDT, ccex::Currency::RUB),
-			ccex::CurrencyPair(ccex::Currency::USD, ccex::Currency::RUB),
-			ccex::CurrencyPair(ccex::Currency::DOGE, ccex::Currency::BTC),
-			ccex::CurrencyPair(ccex::Currency::WAVES, ccex::Currency::BTC),
-			ccex::CurrencyPair(ccex::Currency::WAVES, ccex::Currency::RUB),
-			ccex::CurrencyPair(ccex::Currency::KICK, ccex::Currency::BTC),
-			ccex::CurrencyPair(ccex::Currency::KICK, ccex::Currency::ETH),
-		].into_iter().cycle();
-		b.iter(|| client.min_quantity(products.next().unwrap().clone()));
+		let async_client = AsyncExmoRestClient::from(sync_client);
+		Box::new(async_client)
 	}
 }
+
+#[derive(Debug, Clone)]
+pub struct SyncExmoRestClient<Client>
+where Client: HttpClient {
+	pub credential: Credential,
+	pub host: Url,
+	pub client: Client,
+}
+
+impl<Client> SyncExchangeRestClient for SyncExmoRestClient<Client>
+where Client: HttpClient {
+	fn balances(&mut self) -> Result<Vec<ccex::Balance>, Error> {
+		let request = GetUserInfo {
+			nonce: nonce(),
+		}.authenticate(&self.credential);
+		let response = self.client.send(&self.host, request)?;
+
+		let balances = response.balances.into_iter()
+			.filter_map(|(currency, balance)| {
+				match currency.parse::<Currency>() {
+					Ok(currency) => Some((currency, balance)),
+					Err(ParseCurrencyError::InvalidOrUnsupportedCurrency(currency)) => None,
+				}
+			})
+			.map(|(currency, balance)| (ccex::Currency::from(currency), balance))
+			.map(|(currency, balance)| ccex::Balance::new(currency, balance))
+			.collect();
+		Ok(balances)
+	}
+
+
+    fn orderbook(&mut self, product: ccex::CurrencyPair) -> Result<ccex::Orderbook, Error> {
+    	// exmo has the capability to query multiple orderbooks in one
+    	// request, but for now we're only doing single-orderbook requests
+    	let request = GetOrderbook {
+    		products: vec![product.try_into()?],
+    		limit: 100, //fixme: this isn't implemented
+    	};
+    	let response = self.client.send(&self.host, request)?;
+
+    	let p = product;
+    	for (product, exmo_orderbook) in response.into_iter() {
+    		let product = match product.parse::<CurrencyPair>() {
+    			Ok(product) => product,
+    			Err(_) => continue,
+    		};
+    		let product = match ccex::CurrencyPair::try_from(product) {
+    			Ok(product) => product,
+    			Err(_) => continue,
+    		};
+
+    		if product != p {
+    			continue;
+    		}
+
+    		let capacity = Ord::max(exmo_orderbook.ask.len(), exmo_orderbook.bid.len());
+    		let mut orderbook = ccex::Orderbook::with_capacity(capacity);
+    		for (price, amount, _) in exmo_orderbook.ask.into_iter() {
+    			orderbook.add_or_update_ask(ccex::Offer::new(price, amount));
+    		}
+    		for (price, amount, _) in exmo_orderbook.bid.into_iter() {
+    			orderbook.add_or_update_bid(ccex::Offer::new(price, amount));
+    		}
+    		return Ok(orderbook);
+    	}
+
+    	Err(format_err!("no orderbook"))
+    }
+
+    fn orders(&mut self, product: ccex::CurrencyPair) -> Result<Vec<ccex::Order>, Error> {
+    	unimplemented!();
+    }
+
+	fn place_order(&mut self, order: ccex::NewOrder) -> Result<ccex::Order, Error> {
+		let (price, quantity) = match order.instruction {
+			ccex::NewOrderInstruction::Limit {price, quantity, ..} => (price, quantity),
+			_ => return Err(err_msg("only limit orders are supported on exmo")),
+		};
+
+		let request = PlaceOrder {
+			nonce: nonce(),
+			pair: order.product.try_into()?,
+			quantity: quantity,
+			price: price,
+			instruction: match order.side {
+				ccex::Side::Ask => PlaceOrderInstruction::LimitSell,
+				ccex::Side::Bid => PlaceOrderInstruction::LimitBuy,
+			},
+		}.authenticate(&self.credential);
+		let response = self.client.send(&self.host, request)?;
+		Ok(order.into())
+	}
+}
+
+#[derive(Debug)]
+pub struct AsyncExmoRestClient {
+	pub threads: Vec<JoinHandle<()>>,
+	pub orderbook_channel:		RefCell<(mpsc::Sender<ccex::CurrencyPair>, 	mpsc::Receiver<Result<ccex::Orderbook, Error>>)>,
+	pub place_order_channel: 	RefCell<(mpsc::Sender<ccex::NewOrder>, 		mpsc::Receiver<Result<ccex::Order, Error>>)>,
+	pub balances_channel: 		RefCell<(mpsc::Sender<()>, 					mpsc::Receiver<Result<Vec<ccex::Balance>, Error>>)>,
+}
+
+impl AsyncExchangeRestClient for AsyncExmoRestClient {
+	fn balances<'a>(&'a self) -> Future<'a, Result<Vec<ccex::Balance>, Error>> {
+		let (ref mut sender, _) = *self.balances_channel.borrow_mut();
+		sender.send(()).unwrap();
+
+		Future::new(move || {
+			let (_, ref mut receiver) = *self.balances_channel.borrow_mut();
+			receiver.recv().unwrap()
+		})
+	}
+
+	fn orderbook<'a>(&'a self, product: ccex::CurrencyPair) -> Future<'a, Result<ccex::Orderbook, Error>> {
+		let (ref mut sender, _) = *self.orderbook_channel.borrow_mut();
+		sender.send(product).unwrap();
+
+		Future::new(move || {
+			let (_, ref receiver) = *self.orderbook_channel.borrow_mut();
+			receiver.recv().unwrap()
+		})
+	}
+
+	fn orders<'a>(&'a self, product: ccex::CurrencyPair) -> Future<'a, Result<Vec<ccex::Order>, Error>> {
+		unimplemented!()
+	}
+
+	fn place_order<'a>(&'a self, new_order: ccex::NewOrder) -> Future<'a, Result<ccex::Order, Error>> {
+		let (ref mut sender, _) = *self.place_order_channel.borrow_mut();
+		sender.send(new_order).unwrap();
+
+		Future::new(move || {
+			let (_, ref mut receiver) = *self.place_order_channel.borrow_mut();
+			receiver.recv().unwrap()
+		})
+	}
+}
+
+impl<Client> From<SyncExmoRestClient<Client>> for AsyncExmoRestClient
+where Client: HttpClient {
+	fn from(exmo: SyncExmoRestClient<Client>) -> Self {
+		let (orderbook_channel, worker_orderbook_channel) = dual_channel();
+		let orderbook_thread = {
+			let mut exmo = exmo.clone();
+			let (mut sender, mut receiver) = worker_orderbook_channel;
+			thread::spawn(move || {
+				for product in receiver.iter() {
+					sender.send(exmo.orderbook(product)).unwrap();
+				}
+			})
+		};
+
+		let (place_order_channel, worker_place_order_channel) = dual_channel();
+		let place_order_thread = {
+			let mut exmo = exmo.clone();
+			let (mut sender, mut receiver) = worker_place_order_channel;
+			thread::spawn(move || {
+				for new_order in receiver.iter() {
+					sender.send(exmo.place_order(new_order)).unwrap();
+				}
+			})
+		};
+
+		let (balances_channel, worker_balances_channel) = dual_channel();
+		let balances_thread = {
+			let mut exmo = exmo.clone();
+			let (mut sender, mut receiver) = worker_balances_channel;
+			thread::spawn(move || {
+				for _ in receiver.iter() {
+					sender.send(exmo.balances()).unwrap();
+				}
+			})
+		};
+
+		AsyncExmoRestClient {
+			orderbook_channel: RefCell::new(orderbook_channel),
+			place_order_channel: RefCell::new(place_order_channel),
+			balances_channel: RefCell::new(balances_channel),
+			threads: vec![
+				orderbook_thread,
+				place_order_thread,
+				balances_thread,
+			],
+		}
+	}
+}
+
+// #[cfg(test)]
+// mod bench {
+// 	use super::*;
+// 	use test::Bencher;
+// 	use reqwest;
+// 	use RestExchange;
+
+// 	#[bench]
+// 	fn new_client(b: &mut Bencher) {
+// 		b.iter(|| {
+// 			Exmo {
+// 				credential: Credential {
+// 					key: String::new(),
+// 					secret: String::new(),
+// 				},
+// 				host: Url::parse("http://google.com").unwrap(),
+// 				client: reqwest::Client::new(),
+// 			}
+// 		})
+// 	}
+
+// 	#[bench]
+// 	fn min_quantity(b: &mut Bencher) {
+// 		let client = Exmo {
+// 			credential: Credential {
+// 				key: String::new(),
+// 				secret: String::new(),
+// 			},
+// 			host: Url::parse("http://google.com").unwrap(),
+// 			client: reqwest::Client::new(),
+// 		};
+// 		let mut products = [
+// 			ccex::CurrencyPair(ccex::Currency::BTC, ccex::Currency::USD),
+// 			ccex::CurrencyPair(ccex::Currency::BTC, ccex::Currency::EUR),
+// 			ccex::CurrencyPair(ccex::Currency::BTC, ccex::Currency::RUB),
+// 			ccex::CurrencyPair(ccex::Currency::BTC, ccex::Currency::UAHPAY),
+// 			ccex::CurrencyPair(ccex::Currency::BTC, ccex::Currency::PLN),
+// 			ccex::CurrencyPair(ccex::Currency::BCH, ccex::Currency::BTC),
+// 			ccex::CurrencyPair(ccex::Currency::BCH, ccex::Currency::USD),
+// 			ccex::CurrencyPair(ccex::Currency::BCH, ccex::Currency::RUB),
+// 			ccex::CurrencyPair(ccex::Currency::BCH, ccex::Currency::ETH),
+// 			ccex::CurrencyPair(ccex::Currency::DASH, ccex::Currency::BTC),
+// 			ccex::CurrencyPair(ccex::Currency::DASH, ccex::Currency::USD),
+// 			ccex::CurrencyPair(ccex::Currency::DASH, ccex::Currency::RUB),
+// 			ccex::CurrencyPair(ccex::Currency::ETH, ccex::Currency::BTC),
+// 			ccex::CurrencyPair(ccex::Currency::ETH, ccex::Currency::LTC),
+// 			ccex::CurrencyPair(ccex::Currency::ETH, ccex::Currency::USD),
+// 			ccex::CurrencyPair(ccex::Currency::ETH, ccex::Currency::EUR),
+// 			ccex::CurrencyPair(ccex::Currency::ETH, ccex::Currency::RUB),
+// 			ccex::CurrencyPair(ccex::Currency::ETH, ccex::Currency::UAHPAY),
+// 			ccex::CurrencyPair(ccex::Currency::ETH, ccex::Currency::PLN),
+// 			ccex::CurrencyPair(ccex::Currency::ETC, ccex::Currency::BTC),
+// 			ccex::CurrencyPair(ccex::Currency::ETC, ccex::Currency::USD),
+// 			ccex::CurrencyPair(ccex::Currency::ETC, ccex::Currency::RUB),
+// 			ccex::CurrencyPair(ccex::Currency::LTC, ccex::Currency::BTC),
+// 			ccex::CurrencyPair(ccex::Currency::LTC, ccex::Currency::USD),
+// 			ccex::CurrencyPair(ccex::Currency::LTC, ccex::Currency::EUR),
+// 			ccex::CurrencyPair(ccex::Currency::LTC, ccex::Currency::RUB),
+// 			ccex::CurrencyPair(ccex::Currency::ZEC, ccex::Currency::BTC),
+// 			ccex::CurrencyPair(ccex::Currency::ZEC, ccex::Currency::USD),
+// 			ccex::CurrencyPair(ccex::Currency::ZEC, ccex::Currency::EUR),
+// 			ccex::CurrencyPair(ccex::Currency::ZEC, ccex::Currency::RUB),
+// 			ccex::CurrencyPair(ccex::Currency::XRP, ccex::Currency::BTC),
+// 			ccex::CurrencyPair(ccex::Currency::XRP, ccex::Currency::USD),
+// 			ccex::CurrencyPair(ccex::Currency::XRP, ccex::Currency::RUB),
+// 			ccex::CurrencyPair(ccex::Currency::XMR, ccex::Currency::BTC),
+// 			ccex::CurrencyPair(ccex::Currency::XMR, ccex::Currency::USD),
+// 			ccex::CurrencyPair(ccex::Currency::XMR, ccex::Currency::EUR),
+// 			ccex::CurrencyPair(ccex::Currency::BTC, ccex::Currency::USDT),
+// 			ccex::CurrencyPair(ccex::Currency::ETH, ccex::Currency::USDT),
+// 			ccex::CurrencyPair(ccex::Currency::USDT, ccex::Currency::USD),
+// 			ccex::CurrencyPair(ccex::Currency::USDT, ccex::Currency::RUB),
+// 			ccex::CurrencyPair(ccex::Currency::USD, ccex::Currency::RUB),
+// 			ccex::CurrencyPair(ccex::Currency::DOGE, ccex::Currency::BTC),
+// 			ccex::CurrencyPair(ccex::Currency::WAVES, ccex::Currency::BTC),
+// 			ccex::CurrencyPair(ccex::Currency::WAVES, ccex::Currency::RUB),
+// 			ccex::CurrencyPair(ccex::Currency::KICK, ccex::Currency::BTC),
+// 			ccex::CurrencyPair(ccex::Currency::KICK, ccex::Currency::ETH),
+// 		].into_iter().cycle();
+// 		b.iter(|| client.min_quantity(products.next().unwrap().clone()));
+// 	}
+// }

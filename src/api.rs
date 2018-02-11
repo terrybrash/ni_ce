@@ -1,10 +1,6 @@
-use std::io::{self, Read};
-use std::collections::HashMap;
+use std::io::{Read};
 use url::Url;
-use std::borrow::Cow;
-use std::io::Cursor;
-use failure::{Fail, Error};
-use std::string::FromUtf8Error; 
+use failure::{Error};
 use base64;
 use std::fmt::{self, Display, Formatter};
 use serde::ser::Serialize;
@@ -221,7 +217,8 @@ pub enum WebsocketMessage {
     Pong(Vec<u8>),
 }
 
-pub trait HttpClient: fmt::Debug {
+pub trait HttpClient: 'static + Clone + Send + fmt::Debug {
+    fn new() -> Self;
     fn send<Request>(&mut self, url: &Url, request: Request) -> Result<Request::Response, Error> where Request: RestResource;
 }
 
@@ -338,6 +335,10 @@ impl Display for HttpRequest {
 // todo: impl common headers in RestResource (like Accept-Encoding)
 
 impl HttpClient for reqwest::Client {
+    fn new() -> Self {
+        reqwest::Client::new()
+    }
+
     fn send<Resource>(&mut self, host: &Url, resource: Resource) -> Result<Resource::Response, Error> where Resource: RestResource {
         let request = HttpRequest::new(host.clone(), &resource)?;
         // println!("{}", request);
