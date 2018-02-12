@@ -1,9 +1,11 @@
-use rust_decimal::Decimal as d128;
-use num_traits::*;
-use std::fmt;
-use uuid::Uuid;
 use chrono::{DateTime, Utc};
+use num_traits::*;
+use rust_decimal::Decimal as d128;
+use std::fmt;
+use std::iter::{FromIterator};
+use std::ops::{Deref, DerefMut};
 use std::str::{FromStr};
+use uuid::Uuid;
 
 pub type ID = i64;
 
@@ -424,7 +426,7 @@ impl fmt::Display for Side {
     }
 }
 
-#[derive(Debug, Hash, PartialEq, Clone, Serialize, Deserialize)]
+#[derive(Debug, Hash, PartialEq, Eq, Ord, PartialOrd, Clone, Serialize, Deserialize)]
 pub struct Offer {
     pub price: d128,
     pub quantity: d128,
@@ -441,77 +443,140 @@ impl Offer {
 }
 
 #[derive(Debug, Default, Clone, Serialize, Deserialize)]
-pub struct Orderbook {
-    pub(self) asks: Vec<Offer>,
-    pub(self) bids: Vec<Offer>,
-}
+pub struct Asks(Vec<Offer>);
 
-impl Orderbook {
+impl Asks {
     pub fn with_capacity(capacity: usize) -> Self {
-        Orderbook {
-            asks: Vec::with_capacity(capacity),
-            bids: Vec::with_capacity(capacity),
+        Asks(Vec::with_capacity(capacity))
+    }
+
+    pub fn add_or_update(&mut self, offer: Offer) {
+        match self.binary_search_by_key(&offer.price, |offer| offer.price) {
+            Ok(current_offer) => {
+                self[current_offer].quantity = offer.quantity;
+            }
+            Err(new_offer) => {
+                self.insert(new_offer, offer);
+            }
         }
     }
 
-    pub fn bids<'a>(&'a self) -> Box<Iterator<Item=&'a Offer> + 'a> {
-        Box::new(self.bids.iter().rev())
+    pub fn remove_by_price(&mut self, price: &d128) -> Option<Offer> {
+        self.binary_search_by_key(price, |offer| offer.price)
+            .ok()
+            .map(|offer| self.remove(offer))
+    }
+}
+
+impl Deref for Asks {
+    type Target = Vec<Offer>;
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
+impl DerefMut for Asks {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.0
+    }
+}
+
+impl FromIterator<Offer> for Asks {
+    fn from_iter<I>(offers: I) -> Self 
+    where I: IntoIterator<Item=Offer> {
+        let mut offers = offers.into_iter();
+
+        let (size, _) = offers.size_hint();
+        let mut asks = Asks::with_capacity(size);
+
+        for offer in offers {
+            asks.add_or_update(offer);
+        }
+
+        asks
+    }
+}
+
+#[derive(Debug, Default, Clone, Serialize, Deserialize)]
+pub struct Bids(Vec<Offer>);
+
+impl Bids {
+    pub fn with_capacity(capacity: usize) -> Self {
+        Bids(Vec::with_capacity(capacity))
     }
 
-    pub fn asks<'a>(&'a self) -> Box<Iterator<Item=&'a Offer> + 'a> {
-        Box::new(self.asks.iter())
+    pub fn add_or_update(&mut self, offer: Offer) {
+        match self.binary_search_by_key(&offer.price, |offer| offer.price) {
+            Ok(current_offer) => {
+                self[current_offer].quantity = offer.quantity;
+            }
+            Err(new_offer) => {
+                self.insert(new_offer, offer);
+            }
+        }
     }
 
-    pub fn remove(&mut self, side: Side, offer: Offer) {
-        let current_offer = match side {
-            Side::Ask => 
-                self.asks.binary_search_by_key(&offer.price, |offer| offer.price),
-            Side::Bid => 
-                self.bids.binary_search_by_key(&offer.price, |offer| offer.price),
-        };
+    pub fn remove_by_price(&mut self, price: &d128) -> Option<Offer> {
+        self.binary_search_by_key(price, |offer| offer.price)
+            .ok()
+            .map(|offer| self.remove(offer))
+    }
+}
 
-        match (side, current_offer) {
-            (Side::Ask, Ok(current_offer)) => {
-                self.asks.remove(current_offer);
-            }
-            (Side::Bid, Ok(current_offer)) => {
-                self.bids.remove(current_offer);
-            }
-            (_, Err(_)) => {
-                panic!("Tried to remove an offer that doesn't exist");
-            }
+impl Deref for Bids {
+    type Target = Vec<Offer>;
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
+impl DerefMut for Bids {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.0
+    }
+}
+
+impl FromIterator<Offer> for Bids {
+    fn from_iter<I>(offers: I) -> Self 
+    where I: IntoIterator<Item=Offer> {
+        let mut offers = offers.into_iter();
+
+        let (size, _) = offers.size_hint();
+        let mut bids = Bids::with_capacity(size);
+
+        for offer in offers {
+            bids.add_or_update(offer);
+        }
+
+        bids
+    }
+}
+
+#[derive(Debug, Default, Clone, Serialize, Deserialize)]
+pub struct Orderbook {
+    pub asks: Asks,
+    pub bids: Bids,
+}
+
+impl Orderbook {
+    pub fn new(asks: Asks, bids: Bids) -> Self {
+        Orderbook {
+            asks,
+            bids,
+        }
+    }
+
+    pub fn remove(&mut self, side: Side, offer: &Offer) -> Option<Offer> {
+        match side {
+            Side::Ask => self.asks.remove_by_price(&offer.price),
+            Side::Bid => self.bids.remove_by_price(&offer.price),
         }
     }
 
     pub fn add_or_update(&mut self, side: Side, offer: Offer) {
         match side {
-            Side::Ask => self.add_or_update_ask(offer),
-            Side::Bid => self.add_or_update_bid(offer),
-        }
-    }
-
-    pub fn add_or_update_ask(&mut self, offer: Offer) {
-        let current_offer = self.asks.binary_search_by_key(&offer.price, |offer| offer.price);
-
-        match current_offer {
-            Ok(current_offer) => {
-                self.asks[current_offer].quantity = offer.quantity;
-            }
-            Err(new_offer) => {
-                self.asks.insert(new_offer, offer);
-            }
-        }
-    }
-
-    pub fn add_or_update_bid(&mut self, offer: Offer) {
-        let current_offer = self.bids.binary_search_by_key(&offer.price, |offer| offer.price);
-        match current_offer {
-            Ok(current_offer) => {
-                self.bids[current_offer].quantity = offer.quantity;
-            }
-            Err(new_offer) => {
-                self.bids.insert(new_offer, offer);
-            }
+            Side::Ask => self.asks.add_or_update(offer),
+            Side::Bid => self.bids.add_or_update(offer),
         }
     }
 
@@ -596,14 +661,18 @@ impl Exchange {
     pub fn apply(&mut self, event: ExchangeEvent) {
         match event {
             ExchangeEvent::Heartbeat => {},
-            ExchangeEvent::OrderbookOfferUpdated(product, side, offer) => self.market_mut(&product)
-                .unwrap()
-                .orderbook
-                .add_or_update(side, offer),
-            ExchangeEvent::OrderbookOfferRemoved(product, side, offer) => self.market_mut(&product)
-                .unwrap()
-                .orderbook
-                .remove(side, offer),
+            ExchangeEvent::OrderbookOfferUpdated(product, side, offer) => {
+                self.market_mut(&product)
+                    .unwrap()
+                    .orderbook
+                    .add_or_update(side, offer);
+            }
+            ExchangeEvent::OrderbookOfferRemoved(product, side, offer) => {
+                self.market_mut(&product)
+                    .unwrap()
+                    .orderbook
+                    .remove(side, &offer);
+            }
             ExchangeEvent::MarketAdded(product) => self.add_market(&product),
             ExchangeEvent::TradeExecuted(product, trade) => {
                 self.market_mut(&product).unwrap().trades.push(trade)

@@ -99,10 +99,12 @@ pub enum Currency {
 	ZEC,
 }
 
+#[derive(Fail, Debug, Hash, PartialEq, PartialOrd, Eq, Ord, Clone, Deserialize, Serialize)]
 pub enum ParseCurrencyError {
 	/// The currency is either spelled incorrectly, or isn't supported by this
 	/// crate; it could be a legitimate currency that needs to be added to the
 	/// `Currency` enum.
+	#[fail(display = "Invalid or unsupported currency {}", _0)]
 	InvalidOrUnsupportedCurrency(String),
 }
 
@@ -264,7 +266,7 @@ where T: DeserializeOwned {
 #[derive(Debug, Hash, PartialEq, PartialOrd, Eq, Ord, Clone, Deserialize, Serialize)]
 pub struct GetOrderbook {
 	pub products: Vec<CurrencyPair>,
-	pub limit: usize,
+	pub limit: u64,
 }
 
 #[derive(Debug, Deserialize)]
@@ -444,7 +446,7 @@ where Client: HttpClient {
 	}
 
 	fn orderbook_cooldown(&self) -> Duration {
-		Duration::from_millis(800)
+		Duration::from_millis(480)
 	}
 
 	fn maker_fee(&self) -> d128 {
@@ -540,6 +542,65 @@ where Client: HttpClient {
 	pub client: Client,
 }
 
+impl<Client> SyncExmoRestClient<Client> 
+where Client: HttpClient {
+	fn orderbooks(&mut self, products: &[ccex::CurrencyPair], max_orders: u64) -> Result<Vec<(ccex::CurrencyPair, ccex::Orderbook)>, Error> {
+		let products: Result<Vec<CurrencyPair>, Error> = products.iter()
+			.map(|&product| CurrencyPair::try_from(product).map_err(Into::into))
+			.collect();
+
+    	let request = GetOrderbook {
+    		products: products?,
+    		limit: max_orders,
+    	};
+    	let response = self.client.send(&self.host, request)?;
+
+	    response.into_iter()
+	    	.map(|(product, orderbook)| {
+	    		let product: ccex::CurrencyPair = product
+	    			.parse::<CurrencyPair>()?
+	    			.try_into()?;
+
+	    		let asks = orderbook.ask.into_iter()
+	    			.map(|(price, amount, _)| ccex::Offer::new(price, amount))
+	    			.collect();
+	    		let bids = orderbook.bid.into_iter()
+	    			.map(|(price, amount, _)| ccex::Offer::new(price, amount))
+	    			.collect();
+	    		Ok((product, ccex::Orderbook::new(asks, bids)))
+	    	})
+	    	.collect()
+
+    	// let p = product;
+    	// for (product, exmo_orderbook) in response.into_iter() {
+    	// 	let product = match product.parse::<CurrencyPair>() {
+    	// 		Ok(product) => product,
+    	// 		Err(_) => continue,
+    	// 	};
+    	// 	let product = match ccex::CurrencyPair::try_from(product) {
+    	// 		Ok(product) => product,
+    	// 		Err(_) => continue,
+    	// 	};
+
+    	// 	if product != p {
+    	// 		continue;
+    	// 	}
+
+    	// 	let capacity = Ord::max(exmo_orderbook.ask.len(), exmo_orderbook.bid.len());
+    	// 	let mut orderbook = ccex::Orderbook::with_capacity(capacity);
+    	// 	for (price, amount, _) in exmo_orderbook.ask.into_iter() {
+    	// 		orderbook.add_or_update_ask(ccex::Offer::new(price, amount));
+    	// 	}
+    	// 	for (price, amount, _) in exmo_orderbook.bid.into_iter() {
+    	// 		orderbook.add_or_update_bid(ccex::Offer::new(price, amount));
+    	// 	}
+    	// 	return Ok(orderbook);
+    	// }
+
+    	// Err(format_err!("no orderbook"))
+	}
+}
+
 impl<Client> SyncExchangeRestClient for SyncExmoRestClient<Client>
 where Client: HttpClient {
 	fn balances(&mut self) -> Result<Vec<ccex::Balance>, Error> {
@@ -555,49 +616,21 @@ where Client: HttpClient {
 					Err(ParseCurrencyError::InvalidOrUnsupportedCurrency(currency)) => None,
 				}
 			})
-			.map(|(currency, balance)| (ccex::Currency::from(currency), balance))
-			.map(|(currency, balance)| ccex::Balance::new(currency, balance))
+			.map(|(currency, balance)| {
+				let currency = ccex::Currency::from(currency);
+				ccex::Balance::new(currency, balance)
+			})
 			.collect();
 		Ok(balances)
 	}
 
 
     fn orderbook(&mut self, product: ccex::CurrencyPair) -> Result<ccex::Orderbook, Error> {
-    	// exmo has the capability to query multiple orderbooks in one
-    	// request, but for now we're only doing single-orderbook requests
-    	let request = GetOrderbook {
-    		products: vec![product.try_into()?],
-    		limit: 100, //fixme: this isn't implemented
-    	};
-    	let response = self.client.send(&self.host, request)?;
-
-    	let p = product;
-    	for (product, exmo_orderbook) in response.into_iter() {
-    		let product = match product.parse::<CurrencyPair>() {
-    			Ok(product) => product,
-    			Err(_) => continue,
-    		};
-    		let product = match ccex::CurrencyPair::try_from(product) {
-    			Ok(product) => product,
-    			Err(_) => continue,
-    		};
-
-    		if product != p {
-    			continue;
-    		}
-
-    		let capacity = Ord::max(exmo_orderbook.ask.len(), exmo_orderbook.bid.len());
-    		let mut orderbook = ccex::Orderbook::with_capacity(capacity);
-    		for (price, amount, _) in exmo_orderbook.ask.into_iter() {
-    			orderbook.add_or_update_ask(ccex::Offer::new(price, amount));
-    		}
-    		for (price, amount, _) in exmo_orderbook.bid.into_iter() {
-    			orderbook.add_or_update_bid(ccex::Offer::new(price, amount));
-    		}
-    		return Ok(orderbook);
-    	}
-
-    	Err(format_err!("no orderbook"))
+    	self.orderbooks(&[product], 100)?
+    		.into_iter()
+    		.find(|&(_product, _)| _product == product)
+    		.map(|(_, orderbook)| orderbook)
+    		.ok_or_else(|| format_err!("No orderbook for {:?} returned from the server.", product))
     }
 
     fn orders(&mut self, product: ccex::CurrencyPair) -> Result<Vec<ccex::Order>, Error> {

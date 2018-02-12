@@ -117,7 +117,7 @@ impl QueryBuilder {
         self
     }
 
-    pub fn build(mut self) -> Query {
+    pub fn build(self) -> Query {
         Query::from_vec(self.params)
     }
 }
