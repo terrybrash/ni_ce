@@ -9,7 +9,6 @@ use status::StatusCode;
 use reqwest;
 use tungstenite;
 
-// pub type Headers = HashMap<String, String>;
 pub type Headers = Vec<Header>;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

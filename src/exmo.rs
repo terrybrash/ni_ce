@@ -11,25 +11,25 @@ use api::{
 	QueryBuilder,
 	RestResource,
 };
-use crate as ccex;
 use chrono::{Utc};
-use rust_decimal::Decimal as d128;
+use crate as ccex;
+use failure::{err_msg, Error, ResultExt};
 use hex;
 use hmac::{Hmac, Mac};
+use rust_decimal::Decimal as d128;
 use serde::de::{DeserializeOwned};
 use serde_json;
 use sha2::{Sha512};
-use std::fmt::{self, Display, Formatter};
-use std::str::{FromStr};
-use url::Url;
+use std::cell::RefCell;
 use std::collections::HashMap;
 use std::convert::{TryFrom, TryInto};
-use failure::{err_msg, Error, ResultExt};
-use std::time::Duration;
-use std::thread::{self, JoinHandle};
+use std::fmt::{self, Display, Formatter};
+use std::str::{FromStr};
 use std::sync::mpsc;
+use std::thread::{self, JoinHandle};
+use std::time::Duration;
+use url::Url;
 use {AsyncExchangeRestClient, SyncExchangeRestClient, Exchange, Future, dual_channel};
-use std::cell::RefCell;
 
 #[derive(Debug, Hash, PartialEq, PartialOrd, Eq, Ord, Clone, Deserialize, Serialize)]
 pub struct Credential {
@@ -148,7 +148,6 @@ impl Display for Currency {
 	}
 }
 
-
 impl From<Currency> for ccex::Currency {
 	fn from(currency: Currency) -> Self {
 		match currency {
@@ -204,7 +203,7 @@ impl TryFrom<ccex::Currency> for Currency {
 
 fn private_headers<R>(request: &R, credential: &Credential) -> Result<Headers, Error> 
 where R: RestResource {
-	let mut mac = Hmac:: <Sha512>::new(credential.secret.as_bytes()).map_err(|e| format_err!("{:?}", e))?;
+	let mut mac = Hmac::<Sha512>::new(credential.secret.as_bytes()).map_err(|e| format_err!("{:?}", e))?;
 	match request.body()? {
 		Some(Payload::Text(body)) => mac.input(body.as_bytes()),
 		Some(Payload::Binary(body)) => mac.input(body.as_slice()),
@@ -231,11 +230,13 @@ fn deserialize_private_response<T>(response: &HttpResponse) -> Result<T, Error>
 where T: DeserializeOwned {
 	let body = match response.body {
 		Some(Payload::Text(ref body)) => body,
-		Some(Payload::Binary(_)) => panic!("expected text"),
-		None => panic!(),
-		// None => Err(format_err!("the body is empty"))?,
+		Some(Payload::Binary(_)) => Err(format_err!("http response contained binary, expected text."))?,
+		None => Err(format_err!("the body is empty"))?,
 	};
 	let response: serde_json::Value = serde_json::from_str(body)?;
+
+	// If the response is an error, it will be a json object containing a
+	// `result` equal to `false`.
 	let is_error = response.as_object().map(|object|
 		match object.get("result") {
 			Some(&serde_json::Value::Bool(result)) => !result,
@@ -271,12 +272,15 @@ pub struct GetOrderbook {
 
 #[derive(Debug, Deserialize)]
 pub struct Orderbook {
-	pub ask_quantity: d128,
-	pub ask_amount: d128,
-	pub ask_top: d128,
-	pub bid_quantity: d128,
-	pub bid_amount: d128,
-	pub bid_top: d128,
+	// The fields commented out aren't being used so there's no point in doing
+	// the work to deserialize them.
+
+	// pub ask_quantity: d128,
+	// pub ask_amount: d128,
+	// pub ask_top: d128,
+	// pub bid_quantity: d128,
+	// pub bid_amount: d128,
+	// pub bid_top: d128,
 	pub ask: Vec<(d128, d128, d128)>,
 	pub bid: Vec<(d128, d128, d128)>,
 }
@@ -354,7 +358,7 @@ impl<'a> RestResource for PrivateRequest<GetUserInfo, &'a Credential> {
 }
 
 #[derive(Debug, PartialEq, Eq, Copy, Hash, PartialOrd, Ord, Clone, Deserialize, Serialize)]
-pub enum PlaceOrderInstruction {
+pub enum OrderInstruction {
 	LimitBuy,
 	LimitSell,
 	MarketBuy,
@@ -363,15 +367,15 @@ pub enum PlaceOrderInstruction {
 	MarketSellTotal,
 }
 
-impl Display for PlaceOrderInstruction {
+impl Display for OrderInstruction {
 	fn fmt(&self, f: &mut Formatter) -> Result<(), fmt::Error> {
 		match *self {
-			PlaceOrderInstruction::LimitBuy => f.write_str("buy"),
-			PlaceOrderInstruction::LimitSell => f.write_str("sell"),
-			PlaceOrderInstruction::MarketBuy => f.write_str("market_buy"),
-			PlaceOrderInstruction::MarketSell => f.write_str("market_sell"),
-			PlaceOrderInstruction::MarketBuyTotal => f.write_str("market_buy_total"),
-			PlaceOrderInstruction::MarketSellTotal => f.write_str("market_sell_total"),
+			OrderInstruction::LimitBuy => f.write_str("buy"),
+			OrderInstruction::LimitSell => f.write_str("sell"),
+			OrderInstruction::MarketBuy => f.write_str("market_buy"),
+			OrderInstruction::MarketSell => f.write_str("market_sell"),
+			OrderInstruction::MarketBuyTotal => f.write_str("market_buy_total"),
+			OrderInstruction::MarketSellTotal => f.write_str("market_sell_total"),
 		}
 	}
 }
@@ -381,7 +385,7 @@ pub struct PlaceOrder {
 	pub pair: CurrencyPair,
 	pub quantity: d128,
 	pub price: d128,
-	pub instruction: PlaceOrderInstruction,
+	pub instruction: OrderInstruction,
 	pub nonce: u32,
 }
 
@@ -428,11 +432,108 @@ impl<'a> RestResource for PrivateRequest<PlaceOrder, &'a Credential> {
 }
 
 pub fn nonce() -> u32 {
-	// TODO: switch to a cached nonce at some point. this has the limitations
-	// of 1) only allowing one request per millisecond and 2) expiring after
-	// ~50 days
+	// TODO: switch to a cached nonce at some point. Using milliseconds
+	// elapsed since epoch has the limitations of 1) only allowing one request
+	// per millisecond and 2) expiring after ~50 days
 	let now = Utc::now();
 	(now.timestamp() as u32 - 1518363415u32) * 1000 + now.timestamp_subsec_millis()
+}
+
+pub struct Exmo {
+	credential: Credential,
+	orderbook: (Instant, Orderbook),
+	shared_orderbook: Arc<Mutex<(Instant, Orderbook)>>,
+	// balances: Option<Balance>,
+	// shared_balances: Arc<Mutex<Vec<Option<Balance>>>>, // invalidate when a trade is made
+}
+
+impl Exchange {
+	/// Maximum REST requests per minute.
+	const MAX_REQUESTS_PER_MIN: u32 = 180;
+
+	/// The average amount of requests allowed every second. This can probably
+	/// be exceeded in bursts as long as `MAX_REQUESTS_PER_MIN` isn't
+	/// exceeded. I don't know.
+	const AVERAGE_REQUESTS_PER_SEC: u32 = MAX_REQUESTS_PER_MIN / 60;
+
+	/// The average amount of seconds allowed between requests.
+	const AVERAGE_SECS_PER_REQUEST: f64 = 1000.0 / AVERAGE_REQUETS_PER_SEC as f64;
+
+	const REST_DOMAIN: &'static str = "https://api.exmo.com";
+	const WEBSOCKET_DOMAIN: &'static str = "https//websocket.exmo.com";
+
+	fn new<HttpClient>(credential: Credential) -> Self 
+	where HttpClient: HttpClient {
+		let mut exmo = Exmo {
+			credential: Credential,
+			orderbook: (Instant::now(), Orderbook::default()),
+			shared_orderbook: (Instant::now(), Orderbook::default()),
+		};
+		exmo.spawn_orderbook_thread::<HttpClient>();
+		exmo
+	}
+
+	fn spawn_orderbook_thread<HttpClient>(&self) 
+	where Client: HttpClient {
+		let mut client = SyncExmoRestClient {
+			credential: self.credential.clone(),
+			host: REST_DOMAIN.to_string(),
+			client: Client::new();
+		};
+
+		let orderbook = self.shared_orderbook.clone();
+
+		// Orderbook requests can have a pretty high budget because it's
+		// important we have orderbook updates as frequently as possible.
+		const ORDERBOOK_REQUEST_BUDGET: f64 = 0.85;
+		const COOLDOWN_SECS: f64 = Self::AVERAGE_SECS_PER_REQUEST / ORDERBOOK_REQUEST_BUDGET;
+		const COOLDOWN_MILLIS: u32 = (COOLDOWN_SECS * 1000.0) as u32;
+		let cooldown = Duration::from_millis(COOLDOWN_MILLIS);
+
+        thread::spawn(move || {
+            loop {
+                let request_instant = time::Instant::now();
+                match client.orderbook(product) {
+                    Ok(new_orderbook) => {
+                        let time = time::Instant::now();
+                        let mut orderbook = orderbook.lock().unwrap();
+                        *orderbook = (time, new_orderbook);
+                    }
+                    Err(e) => {
+                        println!("[{}] Orderbook error: {}", exchange_name, e);
+                    }
+                }
+
+                let request_elapsed = request_instant.elapsed();
+                if request_elapsed < cooldown {
+                    thread::sleep(cooldown - request_elapsed);
+                } else {
+                    // Don't sleep. It's already been longer than the cooldown
+                    // which means we're lagging behind!
+                    //
+                    // This isn't really that bad, it just means there
+                    // could've been a good order to fill that we missed out
+                    // on while waiting for a slow orderbook response.
+                }
+            }
+        });
+	}
+}
+
+impl Exchange for Exmo {
+	fn maker_fee(&self) -> d128;
+	fn taker_fee() -> d128;
+	fn precision() -> d128;
+	fn orderbook(&self) -> &Orderbook {
+		&self.orderbook
+	}
+	fn update(&self) {
+		self.orderbook = shared_orderbook.lock().unwrap().clone();
+		let mut balance = shared_balances.lock().unwrap();
+		if let Some(balance) = balance.take() {
+			self.balances = balance;
+		}
+	}
 }
 
 pub struct Exmo {
@@ -446,7 +547,7 @@ where Client: HttpClient {
 	}
 
 	fn orderbook_cooldown(&self) -> Duration {
-		Duration::from_millis(480)
+		Duration::from_millis(500)
 	}
 
 	fn maker_fee(&self) -> d128 {
@@ -570,34 +671,6 @@ where Client: HttpClient {
 	    		Ok((product, ccex::Orderbook::new(asks, bids)))
 	    	})
 	    	.collect()
-
-    	// let p = product;
-    	// for (product, exmo_orderbook) in response.into_iter() {
-    	// 	let product = match product.parse::<CurrencyPair>() {
-    	// 		Ok(product) => product,
-    	// 		Err(_) => continue,
-    	// 	};
-    	// 	let product = match ccex::CurrencyPair::try_from(product) {
-    	// 		Ok(product) => product,
-    	// 		Err(_) => continue,
-    	// 	};
-
-    	// 	if product != p {
-    	// 		continue;
-    	// 	}
-
-    	// 	let capacity = Ord::max(exmo_orderbook.ask.len(), exmo_orderbook.bid.len());
-    	// 	let mut orderbook = ccex::Orderbook::with_capacity(capacity);
-    	// 	for (price, amount, _) in exmo_orderbook.ask.into_iter() {
-    	// 		orderbook.add_or_update_ask(ccex::Offer::new(price, amount));
-    	// 	}
-    	// 	for (price, amount, _) in exmo_orderbook.bid.into_iter() {
-    	// 		orderbook.add_or_update_bid(ccex::Offer::new(price, amount));
-    	// 	}
-    	// 	return Ok(orderbook);
-    	// }
-
-    	// Err(format_err!("no orderbook"))
 	}
 }
 
@@ -609,7 +682,7 @@ where Client: HttpClient {
 		}.authenticate(&self.credential);
 		let response = self.client.send(&self.host, request)?;
 
-		let balances = response.balances.into_iter()
+		response.balances.into_iter()
 			.filter_map(|(currency, balance)| {
 				match currency.parse::<Currency>() {
 					Ok(currency) => Some((currency, balance)),
@@ -620,8 +693,8 @@ where Client: HttpClient {
 				let currency = ccex::Currency::from(currency);
 				ccex::Balance::new(currency, balance)
 			})
-			.collect();
-		Ok(balances)
+			.map(Ok)
+			.collect()
 	}
 
 
@@ -649,10 +722,11 @@ where Client: HttpClient {
 			quantity: quantity,
 			price: price,
 			instruction: match order.side {
-				ccex::Side::Ask => PlaceOrderInstruction::LimitSell,
-				ccex::Side::Bid => PlaceOrderInstruction::LimitBuy,
+				ccex::Side::Ask => OrderInstruction::LimitSell,
+				ccex::Side::Bid => OrderInstruction::LimitBuy,
 			},
-		}.authenticate(&self.credential);
+		};
+		let request = request.authenticate(&self.credential);
 		let response = self.client.send(&self.host, request)?;
 		Ok(order.into())
 	}
@@ -750,86 +824,3 @@ where Client: HttpClient {
 		}
 	}
 }
-
-// #[cfg(test)]
-// mod bench {
-// 	use super::*;
-// 	use test::Bencher;
-// 	use reqwest;
-// 	use RestExchange;
-
-// 	#[bench]
-// 	fn new_client(b: &mut Bencher) {
-// 		b.iter(|| {
-// 			Exmo {
-// 				credential: Credential {
-// 					key: String::new(),
-// 					secret: String::new(),
-// 				},
-// 				host: Url::parse("http://google.com").unwrap(),
-// 				client: reqwest::Client::new(),
-// 			}
-// 		})
-// 	}
-
-// 	#[bench]
-// 	fn min_quantity(b: &mut Bencher) {
-// 		let client = Exmo {
-// 			credential: Credential {
-// 				key: String::new(),
-// 				secret: String::new(),
-// 			},
-// 			host: Url::parse("http://google.com").unwrap(),
-// 			client: reqwest::Client::new(),
-// 		};
-// 		let mut products = [
-// 			ccex::CurrencyPair(ccex::Currency::BTC, ccex::Currency::USD),
-// 			ccex::CurrencyPair(ccex::Currency::BTC, ccex::Currency::EUR),
-// 			ccex::CurrencyPair(ccex::Currency::BTC, ccex::Currency::RUB),
-// 			ccex::CurrencyPair(ccex::Currency::BTC, ccex::Currency::UAHPAY),
-// 			ccex::CurrencyPair(ccex::Currency::BTC, ccex::Currency::PLN),
-// 			ccex::CurrencyPair(ccex::Currency::BCH, ccex::Currency::BTC),
-// 			ccex::CurrencyPair(ccex::Currency::BCH, ccex::Currency::USD),
-// 			ccex::CurrencyPair(ccex::Currency::BCH, ccex::Currency::RUB),
-// 			ccex::CurrencyPair(ccex::Currency::BCH, ccex::Currency::ETH),
-// 			ccex::CurrencyPair(ccex::Currency::DASH, ccex::Currency::BTC),
-// 			ccex::CurrencyPair(ccex::Currency::DASH, ccex::Currency::USD),
-// 			ccex::CurrencyPair(ccex::Currency::DASH, ccex::Currency::RUB),
-// 			ccex::CurrencyPair(ccex::Currency::ETH, ccex::Currency::BTC),
-// 			ccex::CurrencyPair(ccex::Currency::ETH, ccex::Currency::LTC),
-// 			ccex::CurrencyPair(ccex::Currency::ETH, ccex::Currency::USD),
-// 			ccex::CurrencyPair(ccex::Currency::ETH, ccex::Currency::EUR),
-// 			ccex::CurrencyPair(ccex::Currency::ETH, ccex::Currency::RUB),
-// 			ccex::CurrencyPair(ccex::Currency::ETH, ccex::Currency::UAHPAY),
-// 			ccex::CurrencyPair(ccex::Currency::ETH, ccex::Currency::PLN),
-// 			ccex::CurrencyPair(ccex::Currency::ETC, ccex::Currency::BTC),
-// 			ccex::CurrencyPair(ccex::Currency::ETC, ccex::Currency::USD),
-// 			ccex::CurrencyPair(ccex::Currency::ETC, ccex::Currency::RUB),
-// 			ccex::CurrencyPair(ccex::Currency::LTC, ccex::Currency::BTC),
-// 			ccex::CurrencyPair(ccex::Currency::LTC, ccex::Currency::USD),
-// 			ccex::CurrencyPair(ccex::Currency::LTC, ccex::Currency::EUR),
-// 			ccex::CurrencyPair(ccex::Currency::LTC, ccex::Currency::RUB),
-// 			ccex::CurrencyPair(ccex::Currency::ZEC, ccex::Currency::BTC),
-// 			ccex::CurrencyPair(ccex::Currency::ZEC, ccex::Currency::USD),
-// 			ccex::CurrencyPair(ccex::Currency::ZEC, ccex::Currency::EUR),
-// 			ccex::CurrencyPair(ccex::Currency::ZEC, ccex::Currency::RUB),
-// 			ccex::CurrencyPair(ccex::Currency::XRP, ccex::Currency::BTC),
-// 			ccex::CurrencyPair(ccex::Currency::XRP, ccex::Currency::USD),
-// 			ccex::CurrencyPair(ccex::Currency::XRP, ccex::Currency::RUB),
-// 			ccex::CurrencyPair(ccex::Currency::XMR, ccex::Currency::BTC),
-// 			ccex::CurrencyPair(ccex::Currency::XMR, ccex::Currency::USD),
-// 			ccex::CurrencyPair(ccex::Currency::XMR, ccex::Currency::EUR),
-// 			ccex::CurrencyPair(ccex::Currency::BTC, ccex::Currency::USDT),
-// 			ccex::CurrencyPair(ccex::Currency::ETH, ccex::Currency::USDT),
-// 			ccex::CurrencyPair(ccex::Currency::USDT, ccex::Currency::USD),
-// 			ccex::CurrencyPair(ccex::Currency::USDT, ccex::Currency::RUB),
-// 			ccex::CurrencyPair(ccex::Currency::USD, ccex::Currency::RUB),
-// 			ccex::CurrencyPair(ccex::Currency::DOGE, ccex::Currency::BTC),
-// 			ccex::CurrencyPair(ccex::Currency::WAVES, ccex::Currency::BTC),
-// 			ccex::CurrencyPair(ccex::Currency::WAVES, ccex::Currency::RUB),
-// 			ccex::CurrencyPair(ccex::Currency::KICK, ccex::Currency::BTC),
-// 			ccex::CurrencyPair(ccex::Currency::KICK, ccex::Currency::ETH),
-// 		].into_iter().cycle();
-// 		b.iter(|| client.min_quantity(products.next().unwrap().clone()));
-// 	}
-// }

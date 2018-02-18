@@ -26,6 +26,7 @@ extern crate uuid;
 pub mod api;
 pub mod exmo;
 pub mod liqui;
+pub mod gemini;
 mod model;
 mod status;
 pub use model::*;
