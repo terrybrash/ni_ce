@@ -7,6 +7,7 @@ use api::{
     RestResource,
     PrivateRequest,
     Method,
+    HttpClient,
 };
 use crate as ccex;
 use rust_decimal::Decimal as d128;
@@ -19,6 +20,8 @@ use std::fmt;
 use std::io;
 use url::Url;
 use gemini::private_headers;
+use std::convert::TryFrom;
+use Exchange;
 
 #[derive(Clone, Copy, Debug, Deserialize, Serialize)]
 #[serde(rename="lowercase")]
