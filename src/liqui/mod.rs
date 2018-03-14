@@ -834,15 +834,35 @@ pub struct Liqui {
     pub credential: Credential,
 }
 
+impl Liqui {
+    pub fn new(credential: Credential) -> Self {
+        Liqui {
+            credential,
+        }
+    }
+}
+
 impl<Client> Exchange<Client> for Liqui
 where Client: HttpClient {
 	fn name(&self) -> &'static str {
 		"Liqui"
 	}
 
-	fn orderbook_cooldown(&self) -> Duration {
-		Duration::from_millis(2100)
-	}
+    fn orderbook(&mut self, product: ccex::CurrencyPair) -> Future<Result<ccex::Orderbook, Error>> {
+        unimplemented!()
+    }
+
+    fn place_order(&mut self, order: ccex::NewOrder) -> Future<Result<ccex::Order, Error>> {
+        unimplemented!()
+    }
+
+    fn balances(&mut self) -> Future<Result<Vec<ccex::Balance>, Error>> {
+        unimplemented!()
+    }
+
+	// fn orderbook_cooldown(&self) -> Duration {
+	// 	Duration::from_millis(2100)
+	// }
 
 	fn maker_fee(&self) -> d128 {
 		// 0.01% / 0.001
@@ -1078,23 +1098,24 @@ where Client: HttpClient {
 		}
 	}
 
-	fn sync_rest_client(&self) -> Box<SyncExchangeRestClient> {
-		Box::new(SyncLiquiRestClient {
-			credential: self.credential.clone(),
-			host: Url::parse("https://api.liqui.io").unwrap(),
-			client: Client::new(),
-		})
-	}
-
-	fn async_rest_client(&self) -> Box<AsyncExchangeRestClient> {
-		let sync_client = SyncLiquiRestClient {
-			credential: self.credential.clone(),
-			host: Url::parse("https://api.liqui.io").unwrap(),
-			client: Client::new(),
-		};
-		let async_client = AsyncLiquiRestClient::from(sync_client);
-		Box::new(async_client)
-	}
+    //
+	// fn sync_rest_client(&self) -> Box<SyncExchangeRestClient> {
+	// 	Box::new(SyncLiquiRestClient {
+	// 		credential: self.credential.clone(),
+	// 		host: Url::parse("https://api.liqui.io").unwrap(),
+	// 		client: Client::new(),
+	// 	})
+	// }
+    //
+	// fn async_rest_client(&self) -> Box<AsyncExchangeRestClient> {
+	// 	let sync_client = SyncLiquiRestClient {
+	// 		credential: self.credential.clone(),
+	// 		host: Url::parse("https://api.liqui.io").unwrap(),
+	// 		client: Client::new(),
+	// 	};
+	// 	let async_client = AsyncLiquiRestClient::from(sync_client);
+	// 	Box::new(async_client)
+	// }
 }
 
 #[derive(Debug, Clone)]
@@ -1229,94 +1250,96 @@ where Client: HttpClient {
     }
 }
 
-pub struct AsyncLiquiRestClient {
-	pub threads: Vec<JoinHandle<()>>,
-	pub orderbook_channel:		RefCell<(mpsc::Sender<ccex::CurrencyPair>, 	mpsc::Receiver<Result<ccex::Orderbook, Error>>)>,
-	pub place_order_channel: 	RefCell<(mpsc::Sender<ccex::NewOrder>, 		mpsc::Receiver<Result<ccex::Order, Error>>)>,
-	pub balances_channel: 		RefCell<(mpsc::Sender<()>, 					mpsc::Receiver<Result<Vec<ccex::Balance>, Error>>)>,
-}
 
-impl AsyncExchangeRestClient for AsyncLiquiRestClient {
-	fn balances<'a>(&'a self) -> Future<'a, Result<Vec<ccex::Balance>, Error>> {
-		let (ref mut sender, _) = *self.balances_channel.borrow_mut();
-		sender.send(()).unwrap();
-
-		Future::new(move || {
-			let (_, ref mut receiver) = *self.balances_channel.borrow_mut();
-			receiver.recv().unwrap()
-		})
-	}
-
-	fn orderbook<'a>(&'a self, product: ccex::CurrencyPair) -> Future<'a, Result<ccex::Orderbook, Error>> {
-		let (ref mut sender, _) = *self.orderbook_channel.borrow_mut();
-		sender.send(product).unwrap();
-
-		Future::new(move || {
-			let (_, ref receiver) = *self.orderbook_channel.borrow_mut();
-			receiver.recv().unwrap()
-		})
-	}
-
-	fn orders<'a>(&'a self, product: ccex::CurrencyPair) -> Future<'a, Result<Vec<ccex::Order>, Error>> {
-		unimplemented!()
-	}
-
-	fn place_order<'a>(&'a self, new_order: ccex::NewOrder) -> Future<'a, Result<ccex::Order, Error>> {
-		let (ref mut sender, _) = *self.place_order_channel.borrow_mut();
-		sender.send(new_order).unwrap();
-
-		Future::new(move || {
-			let (_, ref mut receiver) = *self.place_order_channel.borrow_mut();
-			receiver.recv().unwrap()
-		})
-	}
-}
-
-impl<Client> From<SyncLiquiRestClient<Client>> for AsyncLiquiRestClient
-where Client: HttpClient {
-	fn from(client: SyncLiquiRestClient<Client>) -> Self {
-		let (orderbook_channel, worker_orderbook_channel) = dual_channel();
-		let orderbook_thread = {
-			let mut client = client.clone();
-			let (mut sender, mut receiver) = worker_orderbook_channel;
-			thread::spawn(move || {
-				for product in receiver.iter() {
-					sender.send(client.orderbook(product)).unwrap();
-				}
-			})
-		};
-
-		let (place_order_channel, worker_place_order_channel) = dual_channel();
-		let place_order_thread = {
-			let mut client = client.clone();
-			let (mut sender, mut receiver) = worker_place_order_channel;
-			thread::spawn(move || {
-				for new_order in receiver.iter() {
-					sender.send(client.place_order(new_order)).unwrap();
-				}
-			})
-		};
-
-		let (balances_channel, worker_balances_channel) = dual_channel();
-		let balances_thread = {
-			let mut client = client.clone();
-			let (mut sender, mut receiver) = worker_balances_channel;
-			thread::spawn(move || {
-				for _ in receiver.iter() {
-					sender.send(client.balances()).unwrap();
-				}
-			})
-		};
-
-		AsyncLiquiRestClient {
-			orderbook_channel: RefCell::new(orderbook_channel),
-			place_order_channel: RefCell::new(place_order_channel),
-			balances_channel: RefCell::new(balances_channel),
-			threads: vec![
-				orderbook_thread,
-				place_order_thread,
-				balances_thread,
-			],
-		}
-	}
-}
+// pub struct AsyncLiquiRestClient {
+// 	pub threads: Vec<JoinHandle<()>>,
+// 	pub orderbook_channel:		RefCell<(mpsc::Sender<ccex::CurrencyPair>, 	mpsc::Receiver<Result<ccex::Orderbook, Error>>)>,
+// 	pub place_order_channel: 	RefCell<(mpsc::Sender<ccex::NewOrder>, 		mpsc::Receiver<Result<ccex::Order, Error>>)>,
+// 	pub balances_channel: 		RefCell<(mpsc::Sender<()>, 					mpsc::Receiver<Result<Vec<ccex::Balance>, Error>>)>,
+// }
+//
+// impl AsyncExchangeRestClient for AsyncLiquiRestClient {
+// 	fn balances<'a>(&'a self) -> Future<Result<Vec<ccex::Balance>, Error>> {
+// 		let (ref mut sender, _) = *self.balances_channel.borrow_mut();
+// 		sender.send(()).unwrap();
+//
+// 		Future::new(move || {
+// 			let (_, ref mut receiver) = *self.balances_channel.borrow_mut();
+// 			receiver.recv().unwrap()
+// 		})
+// 	}
+//
+// 	fn orderbook<'a>(&'a self, product: ccex::CurrencyPair) -> Future<Result<ccex::Orderbook, Error>> {
+// 		let (ref mut sender, _) = *self.orderbook_channel.borrow_mut();
+// 		sender.send(product).unwrap();
+//
+// 		Future::new(move || {
+// 			let (_, ref receiver) = *self.orderbook_channel.borrow_mut();
+// 			receiver.recv().unwrap()
+// 		})
+// 	}
+//
+// 	fn orders<'a>(&'a self, product: ccex::CurrencyPair) -> Future<Result<Vec<ccex::Order>, Error>> {
+// 		unimplemented!()
+// 	}
+//
+// 	fn place_order<'a>(&'a self, new_order: ccex::NewOrder) -> Future<Result<ccex::Order, Error>> {
+// 		let (ref mut sender, _) = *self.place_order_channel.borrow_mut();
+// 		sender.send(new_order).unwrap();
+//
+// 		Future::new(move || {
+// 			let (_, ref mut receiver) = *self.place_order_channel.borrow_mut();
+// 			receiver.recv().unwrap()
+// 		})
+// 	}
+// }
+//
+// impl<Client> From<SyncLiquiRestClient<Client>> for AsyncLiquiRestClient
+// where Client: HttpClient {
+// 	fn from(client: SyncLiquiRestClient<Client>) -> Self {
+// 		let (orderbook_channel, worker_orderbook_channel) = dual_channel();
+// 		let orderbook_thread = {
+// 			let mut client = client.clone();
+// 			let (mut sender, mut receiver) = worker_orderbook_channel;
+// 			thread::spawn(move || {
+// 				for product in receiver.iter() {
+// 					sender.send(client.orderbook(product)).unwrap();
+// 				}
+// 			})
+// 		};
+//
+// 		let (place_order_channel, worker_place_order_channel) = dual_channel();
+// 		let place_order_thread = {
+// 			let mut client = client.clone();
+// 			let (mut sender, mut receiver) = worker_place_order_channel;
+// 			thread::spawn(move || {
+// 				for new_order in receiver.iter() {
+// 					sender.send(client.place_order(new_order)).unwrap();
+// 				}
+// 			})
+// 		};
+//
+// 		let (balances_channel, worker_balances_channel) = dual_channel();
+// 		let balances_thread = {
+// 			let mut client = client.clone();
+// 			let (mut sender, mut receiver) = worker_balances_channel;
+// 			thread::spawn(move || {
+// 				for _ in receiver.iter() {
+// 					sender.send(client.balances()).unwrap();
+// 				}
+// 			})
+// 		};
+//
+// 		AsyncLiquiRestClient {
+// 			orderbook_channel: RefCell::new(orderbook_channel),
+// 			place_order_channel: RefCell::new(place_order_channel),
+// 			balances_channel: RefCell::new(balances_channel),
+// 			threads: vec![
+// 				orderbook_thread,
+// 				place_order_thread,
+// 				balances_thread,
+// 			],
+// 		}
+// 	}
+// }
+//

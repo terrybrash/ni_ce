@@ -9,6 +9,14 @@ use uuid::Uuid;
 
 pub type ID = i64;
 
+
+#[derive(Debug, Hash, PartialEq, PartialOrd, Eq, Ord, Clone, Deserialize, Serialize)]
+pub struct Credential {
+    pub secret: String,
+    pub key: String,
+    pub password: Option<String>,
+}
+
 #[derive(Debug, Hash, PartialEq, PartialOrd, Eq, Ord, Clone, Copy, Deserialize, Serialize)]
 pub struct CurrencyPair(pub Currency, pub Currency);
 

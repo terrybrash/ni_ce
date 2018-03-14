@@ -1,5 +1,5 @@
 use std::io::{Read};
-use url::Url;
+use url::{self, Url};
 use failure::{Error};
 use base64;
 use std::fmt::{self, Display, Formatter};
@@ -216,9 +216,9 @@ pub enum WebsocketMessage {
     Pong(Vec<u8>),
 }
 
-pub trait HttpClient: 'static + Clone + Send + fmt::Debug {
+pub trait HttpClient: 'static + Clone + Send + Sized + fmt::Debug {
     fn new() -> Self;
-    fn send<Request>(&mut self, url: &Url, request: Request) -> Result<Request::Response, Error> where Request: RestResource;
+    fn send(&mut self, request: &HttpRequest) -> Result<HttpResponse, Error>;
 }
 
 impl From<Method> for reqwest::Method {
@@ -237,6 +237,7 @@ impl From<Method> for reqwest::Method {
         }
     }
 }
+
 
 #[derive(Debug, Clone)]
 pub struct HttpResponse {
@@ -286,36 +287,41 @@ impl Display for HttpResponse {
     }
 }
 
-struct HttpRequest {
-    pub host: Url,
-    pub method: Method,
-    pub body: Option<Payload>,
-    pub headers: Headers,
-    pub url: Url,
+#[derive(Debug, Clone)]
+pub struct HttpRequest<'a> {
+	pub method: Method,
+	pub path: &'a str,
+	pub host: &'a str,
+	pub headers: Option<Headers>,
+	pub body: Option<Payload>,
+	pub query: Option<Query>,
 }
 
-impl HttpRequest {
-    pub fn new<Resource>(host: Url, resource: &Resource) -> Result<Self, Error> 
-    where Resource: RestResource {
-        let query = resource.query().to_string();
-        let path = resource.path();
-        let request = HttpRequest {
-            url: host.join(&path)?.join(&query)?,
-            host: host,
-            method: resource.method(),
-            body: resource.body()?,
-            headers: resource.headers()?,
-        };
-        Ok(request)
+impl<'a> HttpRequest<'a> {
+    pub fn url(&self) -> Result<Url, url::ParseError> {
+        match self.query {
+            Some(ref query) => {
+                Url::parse(self.host)?.join(self.path)?.join(query.to_string().as_str())
+            }
+            None => {
+                Url::parse(self.host)?.join(self.path)
+            }
+        }
     }
 }
 
-impl Display for HttpRequest {
+impl<'a> Display for HttpRequest<'a> {
     fn fmt(&self, f: &mut Formatter) -> Result<(), fmt::Error> {
-        writeln!(f, "{} {}", self.method, self.url)?;
+        writeln!(f, "{} {:?}", self.method, self.url())?;
 
-        for header in &self.headers {
-            writeln!(f, "{}", header)?;
+        if let Some(ref headers) = self.headers {
+            for header in headers {
+                writeln!(f, "{}", header)?;
+            }
+        }
+
+        if let Some(ref query) = self.query {
+            writeln!(f, "Query: {}", query.to_string())?;
         }
 
         if let Some(ref body) = self.body {
@@ -327,44 +333,38 @@ impl Display for HttpRequest {
 }
 
 
-// todo: make an enum for body payloads where the available tags are
-//       Text/Binary/Json and other things (lookup the RFCs)
-// todo: remove HttpRequest and make a Log trait that gets implemented on
-//       reqwest::Request and reqwest::Response.
-// todo: impl common headers in RestResource (like Accept-Encoding)
-
 impl HttpClient for reqwest::Client {
     fn new() -> Self {
         reqwest::Client::new()
     }
 
-    fn send<Resource>(&mut self, host: &Url, resource: Resource) -> Result<Resource::Response, Error> where Resource: RestResource {
-        let request = HttpRequest::new(host.clone(), &resource)?;
-        // println!("{}", request);
+    fn send(&mut self, request: &HttpRequest) -> Result<HttpResponse, Error> {
+        let mut request_builder = self.request(request.method.clone().into(), request.url().map_err(|e| format_err!("{}", e))?);
 
-        let mut request_builder = self.request(request.method.into(), request.url);
-
-        let mut reqwest_headers = reqwest::header::Headers::new();
-        for header in request.headers {
-            reqwest_headers.set_raw(header.name.clone(), header.values.as_slice().join("; "));
+        if let Some(ref headers) = request.headers {
+            let mut reqwest_headers = reqwest::header::Headers::new();
+            for header in headers {
+                reqwest_headers.set_raw(header.name.clone(), header.values.as_slice().join("; "));
+            }
+            request_builder.headers(reqwest_headers);
         }
-        request_builder.headers(reqwest_headers);
 
         match request.body {
-            Some(Payload::Text(body)) => {request_builder.body(body);},
-            Some(Payload::Binary(body)) => {request_builder.body(body);},
-            None => (),
+            Some(Payload::Text(ref body)) => {
+                request_builder.body(body.clone());
+            }
+            Some(Payload::Binary(ref body)) => {
+                request_builder.body(body.clone());
+            }
+            None => {}
         }
 
         let request = request_builder.build()?;
-        let response: HttpResponse = self.execute(request)?.into();
-        // println!("{}", response);
+        let response = self.execute(request)?.into();
 
-        Ok(resource.deserialize(&response)?)
+        Ok(response)
     }
 }
-
-
 
 pub struct TungsteniteClient<R> where R: WebsocketResource {
     pub client: tungstenite::protocol::WebSocket<tungstenite::client::AutoStream>,
