@@ -1,36 +1,24 @@
-use api::{
-    Header,
-    Headers,
-    HttpClient,
-    HttpRequest,
-    HttpResponse,
-    Method,
-    NeedsAuthentication,
-    Payload,
-    PrivateRequest,
-    Query,
-    QueryBuilder,
-    RestResource,
-};
-use chrono::{Utc};
+use api::{Header, Headers, HttpClient, HttpRequest, HttpResponse, Method, NeedsAuthentication,
+          Payload, PrivateRequest, Query, QueryBuilder, RestResource};
+use chrono::Utc;
 use crate as ccex;
 use failure::{err_msg, Error, ResultExt};
 use hex;
 use hmac::{Hmac, Mac};
 use rust_decimal::Decimal as d128;
-use serde::de::{DeserializeOwned};
+use serde::de::DeserializeOwned;
 use serde_json;
-use sha2::{Sha512};
+use sha2::Sha512;
 use std::cell::RefCell;
 use std::collections::HashMap;
 use std::convert::{TryFrom, TryInto};
 use std::fmt::{self, Display, Formatter};
-use std::str::{FromStr};
-use std::sync::{Mutex, Arc, mpsc};
+use std::str::FromStr;
+use std::sync::{mpsc, Arc, Mutex};
 use std::thread::{self, JoinHandle};
 use std::time::{self, Duration};
 use url::Url;
-use {Exchange, Future, FutureLock, dual_channel};
+use {dual_channel, Exchange, Future, FutureLock};
 
 #[derive(Fail, Debug, Hash, PartialEq, PartialOrd, Eq, Ord, Clone, Deserialize, Serialize)]
 pub enum CurrencyConversionError {
@@ -133,7 +121,9 @@ impl FromStr for Currency {
                 return Ok(currency);
             }
         }
-        Err(ParseCurrencyError::InvalidOrUnsupportedCurrency(s.to_owned()))
+        Err(ParseCurrencyError::InvalidOrUnsupportedCurrency(
+            s.to_owned(),
+        ))
     }
 }
 
@@ -191,7 +181,9 @@ impl TryFrom<ccex::Currency> for Currency {
             ccex::Currency::XMR => Ok(Currency::XMR),
             ccex::Currency::XRP => Ok(Currency::XRP),
             ccex::Currency::ZEC => Ok(Currency::ZEC),
-            currency => Err(CurrencyConversionError::UnsupportedCurrency(currency.to_string())),
+            currency => Err(CurrencyConversionError::UnsupportedCurrency(
+                currency.to_string(),
+            )),
         }
     }
 }
@@ -225,10 +217,6 @@ impl Display for OrderInstruction {
     }
 }
 
-
-
-
-
 #[derive(Debug, Deserialize)]
 struct Orderbook {
     pub ask_quantity: d128,
@@ -248,7 +236,6 @@ struct UserInfo {
     pub balances: HashMap<String, d128>,
     pub reserved: HashMap<String, d128>,
 }
-
 
 #[derive(Debug, Hash, PartialEq, PartialOrd, Eq, Ord, Clone, Deserialize, Serialize)]
 struct NewOrder {
@@ -278,77 +265,91 @@ impl<Client: HttpClient> Exmo<Client> {
         (now.timestamp() as u32 - 1518363415u32) * 1000 + now.timestamp_subsec_millis()
     }
 
-	fn get_user_info(&mut self, nonce: u32, credential: &ccex::Credential) -> Result<UserInfo, Error> {
-		let query = QueryBuilder::with_capacity(2)
-			.param("nonce", nonce.to_string())
-			.build();
-		let body = query.to_string().trim_left_matches("?").to_owned();
-		let headers = Self::private_headers(credential, &body)?;
-		let http_request = HttpRequest {
-			method: Method::Post,
-			path: "/v1/user_info",
-			host: self.host.as_str(),
-			headers: Some(headers),
-			body: Some(Payload::Text(body)),
-			query: Some(query),
-		};
-		let http_response = self.http_client.send(&http_request)?;
-		Self::deserialize_private_response(&http_response)
-	}
+    fn get_user_info(
+        &mut self,
+        nonce: u32,
+        credential: &ccex::Credential,
+    ) -> Result<UserInfo, Error> {
+        let query = QueryBuilder::with_capacity(2)
+            .param("nonce", nonce.to_string())
+            .build();
+        let body = query.to_string().trim_left_matches("?").to_owned();
+        let headers = Self::private_headers(credential, &body)?;
+        let http_request = HttpRequest {
+            method: Method::Post,
+            path: "/v1/user_info",
+            host: self.host.as_str(),
+            headers: Some(headers),
+            body: Some(Payload::Text(body)),
+            query: Some(query),
+        };
+        let http_response = self.http_client.send(&http_request)?;
+        Self::deserialize_private_response(&http_response)
+    }
 
-	fn private_headers(credential: &ccex::Credential, request_body: &str) -> Result<Headers, Error> {
-		let mut mac = Hmac::<Sha512>::new(credential.secret.as_bytes())
-			.map_err(|e| format_err!("{:?}", e))?;
-		mac.input(request_body.as_bytes());
-		let signature = hex::encode(mac.result().code().to_vec());
-		let headers = vec![
-			Header::new("Content-Length", signature.len().to_string()),
-			Header::new("Content-Type", "application/x-www-form-urlencoded"),
-			Header::new("Key", credential.key.clone()),
-			Header::new("Sign", signature),
-		];
-		Ok(headers)
-	}
+    fn private_headers(
+        credential: &ccex::Credential,
+        request_body: &str,
+    ) -> Result<Headers, Error> {
+        let mut mac =
+            Hmac::<Sha512>::new(credential.secret.as_bytes()).map_err(|e| format_err!("{:?}", e))?;
+        mac.input(request_body.as_bytes());
+        let signature = hex::encode(mac.result().code().to_vec());
+        let headers = vec![
+            Header::new("Content-Length", signature.len().to_string()),
+            Header::new("Content-Type", "application/x-www-form-urlencoded"),
+            Header::new("Key", credential.key.clone()),
+            Header::new("Sign", signature),
+        ];
+        Ok(headers)
+    }
 
-	/// Deserialize a response returned from a private HTTP request.
-	fn deserialize_private_response<T>(response: &HttpResponse) -> Result<T, Error> 
-	where T: DeserializeOwned {
-		let body = match response.body {
-			Some(Payload::Text(ref body)) => body,
-			Some(Payload::Binary(_)) => Err(format_err!("http response contained binary, expected text."))?,
-			None => Err(format_err!("the body is empty"))?,
-		};
-		let response: serde_json::Value = serde_json::from_str(body)?;
+    /// Deserialize a response returned from a private HTTP request.
+    fn deserialize_private_response<T>(response: &HttpResponse) -> Result<T, Error>
+    where
+        T: DeserializeOwned,
+    {
+        let body = match response.body {
+            Some(Payload::Text(ref body)) => body,
+            Some(Payload::Binary(_)) => Err(format_err!(
+                "http response contained binary, expected text."
+            ))?,
+            None => Err(format_err!("the body is empty"))?,
+        };
+        let response: serde_json::Value = serde_json::from_str(body)?;
 
-		// If the response is an error, it will be a json object containing a
-		// `result` equal to `false`.
-		let is_error = response.as_object().map(|object| {
-			match object.get("result") {
-				Some(&serde_json::Value::Bool(result)) => !result,
-				_ => false,
-			}}).unwrap_or(false);
+        // If the response is an error, it will be a json object containing a
+        // `result` equal to `false`.
+        let is_error = response
+            .as_object()
+            .map(|object| match object.get("result") {
+                Some(&serde_json::Value::Bool(result)) => !result,
+                _ => false,
+            })
+            .unwrap_or(false);
 
-		if is_error {
-			let error: ErrorResponse = serde_json::from_value(response)
-				.with_context(|_| format!("failed to deserialize: \"{}\"", body))?;
-			Err(format_err!("Server returned: {}", error.error))
-		} else {
-			let response = 
-				serde_json::from_value(response)
-				.context(format!("failed to deserialize: \"{}\"", body))?;
-			Ok(response)
-		}
-	}
+        if is_error {
+            let error: ErrorResponse = serde_json::from_value(response)
+                .with_context(|_| format!("failed to deserialize: \"{}\"", body))?;
+            Err(format_err!("Server returned: {}", error.error))
+        } else {
+            let response = serde_json::from_value(response)
+                .context(format!("failed to deserialize: \"{}\"", body))?;
+            Ok(response)
+        }
+    }
 
-	/// Deserialize a response returned from a public HTTP request.
-	fn deserialize_public_response<T>(response: &HttpResponse) -> Result<T, Error>
-	where T: DeserializeOwned {
-		match response.body {
-			Some(Payload::Text(ref body)) => Ok(serde_json::from_str(body)?),
-			Some(Payload::Binary(ref body)) => Ok(serde_json::from_slice(body)?),
-			None => panic!(),
-		}
-	}
+    /// Deserialize a response returned from a public HTTP request.
+    fn deserialize_public_response<T>(response: &HttpResponse) -> Result<T, Error>
+    where
+        T: DeserializeOwned,
+    {
+        match response.body {
+            Some(Payload::Text(ref body)) => Ok(serde_json::from_str(body)?),
+            Some(Payload::Binary(ref body)) => Ok(serde_json::from_slice(body)?),
+            None => panic!(),
+        }
+    }
 }
 
 impl<Client: HttpClient> Exchange for Exmo<Client> {
@@ -371,7 +372,10 @@ impl<Client: HttpClient> Exchange for Exmo<Client> {
         Ok(balances)
     }
 
-	fn get_orderbooks(&mut self, products: &[ccex::CurrencyPair]) -> Result<HashMap<ccex::CurrencyPair, ccex::Orderbook>, Error> {
+    fn get_orderbooks(
+        &mut self,
+        products: &[ccex::CurrencyPair],
+    ) -> Result<HashMap<ccex::CurrencyPair, ccex::Orderbook>, Error> {
         let mut exmo_products = Vec::with_capacity(products.len());
         for product in products {
             let exmo_product = CurrencyPair::try_from(*product)?;
@@ -391,31 +395,45 @@ impl<Client: HttpClient> Exchange for Exmo<Client> {
             headers: None,
         };
         let http_response = self.http_client.send(&http_request)?;
-        let orderbooks: HashMap<String, Orderbook> = Self::deserialize_public_response(&http_response)?;
+        let orderbooks: HashMap<String, Orderbook> =
+            Self::deserialize_public_response(&http_response)?;
 
-        orderbooks.into_iter().map(|(product, orderbook)| {
-            let product: CurrencyPair = product.parse()?;
-            let product: ccex::CurrencyPair = product.into();
+        orderbooks
+            .into_iter()
+            .map(|(product, orderbook)| {
+                let product: CurrencyPair = product.parse()?;
+                let product: ccex::CurrencyPair = product.into();
 
-            let asks = orderbook.ask.into_iter()
-                .map(|(price, amount, _)| ccex::Offer::new(price, amount))
-                .collect();
-            let bids = orderbook.bid.into_iter()
-                .map(|(price, amount, _)| ccex::Offer::new(price, amount))
-                .collect();
+                let asks = orderbook
+                    .ask
+                    .into_iter()
+                    .map(|(price, amount, _)| ccex::Offer::new(price, amount))
+                    .collect();
+                let bids = orderbook
+                    .bid
+                    .into_iter()
+                    .map(|(price, amount, _)| ccex::Offer::new(price, amount))
+                    .collect();
 
-            Ok((product, ccex::Orderbook::new(asks, bids)))
-        }).collect()
-	}
+                Ok((product, ccex::Orderbook::new(asks, bids)))
+            })
+            .collect()
+    }
 
-    fn place_order(&mut self, credential: &ccex::Credential, order: ccex::NewOrder) -> Result<ccex::Order, Error> {
+    fn place_order(
+        &mut self,
+        credential: &ccex::Credential,
+        order: ccex::NewOrder,
+    ) -> Result<ccex::Order, Error> {
         let exmo_product: CurrencyPair = order.product.try_into()?;
         let exmo_instruction = match order.side {
             ccex::Side::Ask => OrderInstruction::LimitSell,
             ccex::Side::Bid => OrderInstruction::LimitBuy,
         };
         let (price, quantity) = match order.instruction {
-            ccex::NewOrderInstruction::Limit {price, quantity, ..} => (price, quantity),
+            ccex::NewOrderInstruction::Limit {
+                price, quantity, ..
+            } => (price, quantity),
             _ => return Err(err_msg("only limit orders are supported on exmo")),
         };
 
@@ -466,7 +484,9 @@ impl<Client: HttpClient> Exchange for Exmo<Client> {
             ccex::CurrencyPair(ccex::Currency::BTC, ccex::Currency::USD) => Some(d128::new(1, 3)),
             ccex::CurrencyPair(ccex::Currency::BTC, ccex::Currency::EUR) => Some(d128::new(1, 3)),
             ccex::CurrencyPair(ccex::Currency::BTC, ccex::Currency::RUB) => Some(d128::new(1, 3)),
-            ccex::CurrencyPair(ccex::Currency::BTC, ccex::Currency::UAHPAY) => Some(d128::new(1, 3)),
+            ccex::CurrencyPair(ccex::Currency::BTC, ccex::Currency::UAHPAY) => {
+                Some(d128::new(1, 3))
+            }
             ccex::CurrencyPair(ccex::Currency::BTC, ccex::Currency::PLN) => Some(d128::new(1, 3)),
             ccex::CurrencyPair(ccex::Currency::BCH, ccex::Currency::BTC) => Some(d128::new(3, 3)),
             ccex::CurrencyPair(ccex::Currency::BCH, ccex::Currency::USD) => Some(d128::new(3, 3)),
@@ -480,7 +500,9 @@ impl<Client: HttpClient> Exchange for Exmo<Client> {
             ccex::CurrencyPair(ccex::Currency::ETH, ccex::Currency::USD) => Some(d128::new(1, 2)),
             ccex::CurrencyPair(ccex::Currency::ETH, ccex::Currency::EUR) => Some(d128::new(1, 2)),
             ccex::CurrencyPair(ccex::Currency::ETH, ccex::Currency::RUB) => Some(d128::new(1, 2)),
-            ccex::CurrencyPair(ccex::Currency::ETH, ccex::Currency::UAHPAY) => Some(d128::new(1, 2)),
+            ccex::CurrencyPair(ccex::Currency::ETH, ccex::Currency::UAHPAY) => {
+                Some(d128::new(1, 2))
+            }
             ccex::CurrencyPair(ccex::Currency::ETH, ccex::Currency::PLN) => Some(d128::new(1, 3)),
             ccex::CurrencyPair(ccex::Currency::ETC, ccex::Currency::BTC) => Some(d128::new(2, 1)),
             ccex::CurrencyPair(ccex::Currency::ETC, ccex::Currency::USD) => Some(d128::new(2, 1)),
@@ -504,58 +526,21 @@ impl<Client: HttpClient> Exchange for Exmo<Client> {
             ccex::CurrencyPair(ccex::Currency::USDT, ccex::Currency::USD) => Some(d128::new(3, 0)),
             ccex::CurrencyPair(ccex::Currency::USDT, ccex::Currency::RUB) => Some(d128::new(3, 0)),
             ccex::CurrencyPair(ccex::Currency::USD, ccex::Currency::RUB) => Some(d128::new(3, 0)),
-            ccex::CurrencyPair(ccex::Currency::DOGE, ccex::Currency::BTC) => Some(d128::new(100, 0)),
+            ccex::CurrencyPair(ccex::Currency::DOGE, ccex::Currency::BTC) => {
+                Some(d128::new(100, 0))
+            }
             ccex::CurrencyPair(ccex::Currency::WAVES, ccex::Currency::BTC) => Some(d128::new(5, 1)),
             ccex::CurrencyPair(ccex::Currency::WAVES, ccex::Currency::RUB) => Some(d128::new(5, 1)),
-            ccex::CurrencyPair(ccex::Currency::KICK, ccex::Currency::BTC) => Some(d128::new(100, 0)),
-            ccex::CurrencyPair(ccex::Currency::KICK, ccex::Currency::ETH) => Some(d128::new(100, 0)),
+            ccex::CurrencyPair(ccex::Currency::KICK, ccex::Currency::BTC) => {
+                Some(d128::new(100, 0))
+            }
+            ccex::CurrencyPair(ccex::Currency::KICK, ccex::Currency::ETH) => {
+                Some(d128::new(100, 0))
+            }
             _ => None,
         }
     }
 }
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 
 // pub struct Exmo {
 //     credential: Credential,
@@ -579,7 +564,7 @@ impl<Client: HttpClient> Exchange for Exmo<Client> {
 //     /// Exmo's REST domain.
 //     const REST_DOMAIN: &'static str = "https://api.exmo.com";
 //
-//     pub fn new<Client>(credential: Credential) -> Self 
+//     pub fn new<Client>(credential: Credential) -> Self
 //     where Client: HttpClient {
 //         let new_sync_client = || {
 //             SyncExmoRestClient {

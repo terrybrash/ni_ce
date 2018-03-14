@@ -3,19 +3,20 @@
 #![feature(crate_in_paths)]
 #![feature(test)]
 #![feature(try_from)]
-
 #![allow(warnings)]
 
-#[macro_use] extern crate failure;
-#[macro_use] extern crate serde_derive;
 extern crate base64;
 extern crate chrono;
+#[macro_use]
+extern crate failure;
 extern crate hex;
 extern crate hmac;
 extern crate num_traits;
 extern crate reqwest;
 extern crate rust_decimal;
 extern crate serde;
+#[macro_use]
+extern crate serde_derive;
 extern crate serde_json;
 extern crate sha2;
 extern crate test;
@@ -33,13 +34,13 @@ mod model;
 mod status;
 pub use model::*;
 
-use failure::{Error};
+use failure::Error;
 use rust_decimal::Decimal as d128;
 use std::boxed::FnBox;
 use std::sync::mpsc;
 use api::HttpClient;
-use std::sync::{Mutex, Condvar, Arc};
-use std::collections::{HashMap};
+use std::sync::{Arc, Condvar, Mutex};
+use std::collections::HashMap;
 use crate as ccex;
 
 // /// The interface to an exchange.
@@ -51,10 +52,10 @@ use crate as ccex;
 //
 //     /// The taker fee as a percentage. `1.0` is equal to 100%.
 //     fn taker_fee(&self) -> d128;
-//     
+//
 //     /// The minimum quantity allowed for trades of `product`.
 // 	fn min_quantity(&self, product: CurrencyPair) -> Option<d128>;
-//     
+//
 // 	/// The number of decimal places supported.
 // 	fn precision(&self) -> u32;
 //
@@ -73,22 +74,29 @@ pub trait Exchange {
     fn name(&self) -> &'static str;
 
     /// The maker fee as a percentage. `1.0` is equal to 100%.
-	fn maker_fee(&self) -> d128;
+    fn maker_fee(&self) -> d128;
 
     /// The taker fee as a percentage. `1.0` is equal to 100%.
     fn taker_fee(&self) -> d128;
-    
+
     /// The minimum quantity allowed for trades of `product`.
-	fn min_quantity(&self, product: ccex::CurrencyPair) -> Option<d128>;
-    
-	/// The number of decimal places supported.
-	fn precision(&self) -> u32;
+    fn min_quantity(&self, product: ccex::CurrencyPair) -> Option<d128>;
+
+    /// The number of decimal places supported.
+    fn precision(&self) -> u32;
 
     /// Non-blocking request for a new orderbook for a given `product`.
-    fn get_orderbooks(&mut self, products: &[ccex::CurrencyPair]) -> Result<HashMap<ccex::CurrencyPair, ccex::Orderbook>, Error>;
+    fn get_orderbooks(
+        &mut self,
+        products: &[ccex::CurrencyPair],
+    ) -> Result<HashMap<ccex::CurrencyPair, ccex::Orderbook>, Error>;
 
     /// Non-blocking request to place a new order.
-    fn place_order(&mut self, credential: &ccex::Credential, order: ccex::NewOrder) -> Result<ccex::Order, Error>;
+    fn place_order(
+        &mut self,
+        credential: &ccex::Credential,
+        order: ccex::NewOrder,
+    ) -> Result<ccex::Order, Error>;
 
     /// Non-blocking request for current currency balances.
     fn get_balances(&mut self, credential: &ccex::Credential) -> Result<Vec<ccex::Balance>, Error>;
@@ -115,7 +123,7 @@ enum FutureStatus<T> {
 
 /// A handle to a value to be returned at a later time.
 ///
-/// `Future` is the receiver of a value sent by [`FutureLock`]. 
+/// `Future` is the receiver of a value sent by [`FutureLock`].
 ///
 /// [`FutureLock`]: struct.FutureLock.html
 pub struct Future<T> {
@@ -139,7 +147,8 @@ impl<T> Future<T> {
         (future, lock)
     }
 
-    /// Wait for the paired [`FutureLock`] to either return a value with [`FutureLock::send`] or drop.
+    /// Wait for the paired [`FutureLock`] to either return a value with [`FutureLock::send`] or
+    /// drop.
     ///
     /// [`FutureLock`]: struct.FutureLock.html
     /// [`FutureLock::send`]: struct.FutureLock.html#method.send
@@ -175,7 +184,7 @@ impl<T> Future<T> {
 /// a separate thread, work can be done and sent back to the original thread, using `FutureLock`.
 ///
 /// A call to [`Future::wait`] will block until either [`send`] is called or the
-/// `FutureLock` is dropped. 
+/// `FutureLock` is dropped.
 ///
 /// [`Future`] and `FutureLock` can be thought of as a one-time channel, where [`Future`] is the
 /// receiver and `FutureLock` is the sender.
@@ -221,10 +230,13 @@ impl<T> Drop for FutureLock<T> {
     }
 }
 
-fn dual_channel<A, B>() -> ((mpsc::Sender<A>, mpsc::Receiver<B>), (mpsc::Sender<B>, mpsc::Receiver<A>)) {
-	let (sender_a, receiver_a) = mpsc::channel();
-	let (sender_b, receiver_b) = mpsc::channel();
-	let channel_ab = (sender_a, receiver_b);
-	let channel_ba = (sender_b, receiver_a);
-	(channel_ab, channel_ba)
+fn dual_channel<A, B>() -> (
+    (mpsc::Sender<A>, mpsc::Receiver<B>),
+    (mpsc::Sender<B>, mpsc::Receiver<A>),
+) {
+    let (sender_a, receiver_a) = mpsc::channel();
+    let (sender_b, receiver_b) = mpsc::channel();
+    let channel_ab = (sender_a, receiver_b);
+    let channel_ba = (sender_b, receiver_a);
+    (channel_ab, channel_ba)
 }

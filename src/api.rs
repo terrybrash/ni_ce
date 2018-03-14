@@ -1,6 +1,6 @@
-use std::io::{Read};
+use std::io::Read;
 use url::{self, Url};
-use failure::{Error};
+use failure::Error;
 use base64;
 use std::fmt::{self, Display, Formatter};
 use serde::ser::Serialize;
@@ -18,16 +18,22 @@ pub struct Header {
 }
 
 impl Header {
-    pub fn new<N, V>(name: N, value: V) -> Self 
-    where N: Into<String>, V: Into<String> {
+    pub fn new<N, V>(name: N, value: V) -> Self
+    where
+        N: Into<String>,
+        V: Into<String>,
+    {
         Header {
             name: name.into(),
             values: vec![value.into()],
         }
     }
 
-    pub fn from_vec<N, V>(name: N, values: Vec<V>) -> Self 
-    where N: Into<String>, V: Into<String> {
+    pub fn from_vec<N, V>(name: N, values: Vec<V>) -> Self
+    where
+        N: Into<String>,
+        V: Into<String>,
+    {
         Header {
             name: name.into(),
             values: values.into_iter().map(Into::into).collect(),
@@ -76,22 +82,28 @@ pub struct Query {
 }
 
 impl Query {
-    pub fn from_vec<K, V>(params: Vec<(K, V)>) -> Self 
-    where K: Into<String>, V: Into<String> {
+    pub fn from_vec<K, V>(params: Vec<(K, V)>) -> Self
+    where
+        K: Into<String>,
+        V: Into<String>,
+    {
         // let char_len = params.iter().fold(0, |acc, &(ref name, ref value)| acc + name.len() + value.len());
         let char_len = 0;
-        let params = params.into_iter().map(|(k, v)| (k.into(), v.into())).collect();        
-        Query {
-            params,
-            char_len,
-        }
+        let params = params
+            .into_iter()
+            .map(|(k, v)| (k.into(), v.into()))
+            .collect();
+        Query { params, char_len }
     }
 
     pub fn to_string(&self) -> String {
         if self.params.is_empty() {
             String::new()
         } else {
-            let params: Vec<String> = self.params.iter().map(|&(ref name, ref value)| [name.as_str(), value.as_str()].join("=")).collect();
+            let params: Vec<String> = self.params
+                .iter()
+                .map(|&(ref name, ref value)| [name.as_str(), value.as_str()].join("="))
+                .collect();
             let query = ["?", &params.as_slice().join("&")].concat();
             query
         }
@@ -110,8 +122,11 @@ impl QueryBuilder {
         }
     }
 
-    pub fn param<K, V>(mut self, key: K, value: V) -> Self 
-    where K: Into<String>, V: Into<String> {
+    pub fn param<K, V>(mut self, key: K, value: V) -> Self
+    where
+        K: Into<String>,
+        V: Into<String>,
+    {
         self.params.push((key.into(), value.into()));
         self
     }
@@ -122,7 +137,10 @@ impl QueryBuilder {
 }
 
 /// Specifies that a request first needs to be authenticated before becoming a valid request.
-pub trait NeedsAuthentication<C>: Serialize + Sized + fmt::Debug where C: fmt::Debug {
+pub trait NeedsAuthentication<C>: Serialize + Sized + fmt::Debug
+where
+    C: fmt::Debug,
+{
     fn authenticate(self, credential: C) -> PrivateRequest<Self, C> {
         PrivateRequest {
             credential: credential,
@@ -134,7 +152,10 @@ pub trait NeedsAuthentication<C>: Serialize + Sized + fmt::Debug where C: fmt::D
 /// Wrapper for requests that require authentication.
 #[derive(Debug)]
 pub struct PrivateRequest<R, C>
-where R: Serialize + fmt::Debug, C: fmt::Debug {
+where
+    R: Serialize + fmt::Debug,
+    C: fmt::Debug,
+{
     pub request: R,
     pub credential: C,
 }
@@ -150,7 +171,7 @@ pub enum Method {
     Options,
     Trace,
     Connect,
-    Extension(String)
+    Extension(String),
 }
 
 impl fmt::Display for Method {
@@ -233,11 +254,10 @@ impl From<Method> for reqwest::Method {
             Method::Options => reqwest::Method::Options,
             Method::Trace => reqwest::Method::Trace,
             Method::Connect => reqwest::Method::Connect,
-            Method::Extension(m) => reqwest::Method::Extension(m)
+            Method::Extension(m) => reqwest::Method::Extension(m),
         }
     }
 }
-
 
 #[derive(Debug, Clone)]
 pub struct HttpResponse {
@@ -259,9 +279,11 @@ impl From<reqwest::Response> for HttpResponse {
             },
         };
 
-        let headers = response.headers().iter().map(|header| {
-            Header::new(header.name(), header.value_string())
-        }).collect();
+        let headers = response
+            .headers()
+            .iter()
+            .map(|header| Header::new(header.name(), header.value_string()))
+            .collect();
 
         HttpResponse {
             status: StatusCode::try_from(response.status().as_u16()).unwrap(),
@@ -289,23 +311,21 @@ impl Display for HttpResponse {
 
 #[derive(Debug, Clone)]
 pub struct HttpRequest<'a> {
-	pub method: Method,
-	pub path: &'a str,
-	pub host: &'a str,
-	pub headers: Option<Headers>,
-	pub body: Option<Payload>,
-	pub query: Option<Query>,
+    pub method: Method,
+    pub path: &'a str,
+    pub host: &'a str,
+    pub headers: Option<Headers>,
+    pub body: Option<Payload>,
+    pub query: Option<Query>,
 }
 
 impl<'a> HttpRequest<'a> {
     pub fn url(&self) -> Result<Url, url::ParseError> {
         match self.query {
-            Some(ref query) => {
-                Url::parse(self.host)?.join(self.path)?.join(query.to_string().as_str())
-            }
-            None => {
-                Url::parse(self.host)?.join(self.path)
-            }
+            Some(ref query) => Url::parse(self.host)?
+                .join(self.path)?
+                .join(query.to_string().as_str()),
+            None => Url::parse(self.host)?.join(self.path),
         }
     }
 }
@@ -332,14 +352,16 @@ impl<'a> Display for HttpRequest<'a> {
     }
 }
 
-
 impl HttpClient for reqwest::Client {
     fn new() -> Self {
         reqwest::Client::new()
     }
 
     fn send(&mut self, request: &HttpRequest) -> Result<HttpResponse, Error> {
-        let mut request_builder = self.request(request.method.clone().into(), request.url().map_err(|e| format_err!("{}", e))?);
+        let mut request_builder = self.request(
+            request.method.clone().into(),
+            request.url().map_err(|e| format_err!("{}", e))?,
+        );
 
         if let Some(ref headers) = request.headers {
             let mut reqwest_headers = reqwest::header::Headers::new();
@@ -366,24 +388,33 @@ impl HttpClient for reqwest::Client {
     }
 }
 
-pub struct TungsteniteClient<R> where R: WebsocketResource {
+pub struct TungsteniteClient<R>
+where
+    R: WebsocketResource,
+{
     pub client: tungstenite::protocol::WebSocket<tungstenite::client::AutoStream>,
     pub _resource: ::std::marker::PhantomData<R>,
 }
 
-pub trait WebsocketClient<R>: Sized where R: WebsocketResource {
+pub trait WebsocketClient<R>: Sized
+where
+    R: WebsocketResource,
+{
     type Error;
 
     fn connect(url: Url, request: R) -> Result<Self, Self::Error>;
     fn recv(&mut self) -> Result<R::Message, Self::Error>;
-    fn send(&mut self, message: R::Message) -> Result<(), Self::Error>; 
+    fn send(&mut self, message: R::Message) -> Result<(), Self::Error>;
 }
 
-impl<R> WebsocketClient<R> for TungsteniteClient<R> where R: WebsocketResource {
+impl<R> WebsocketClient<R> for TungsteniteClient<R>
+where
+    R: WebsocketResource,
+{
     type Error = tungstenite::error::Error;
 
     fn connect(url: Url, request: R) -> Result<Self, tungstenite::error::Error> {
-        use tungstenite::handshake::client::{Request};
+        use tungstenite::handshake::client::Request;
 
         let mut tungstenite_request = Request::from(url);
         // for header in request.headers() {
@@ -395,7 +426,10 @@ impl<R> WebsocketClient<R> for TungsteniteClient<R> where R: WebsocketResource {
 
         let (client, response) = tungstenite::connect(tungstenite_request).unwrap();
         if response.code != 101 {
-            panic!("[tungstenite] server returned {}: {:?}", response.code, response.headers);
+            panic!(
+                "[tungstenite] server returned {}: {:?}",
+                response.code, response.headers
+            );
         }
 
         Ok(TungsteniteClient {
@@ -418,10 +452,10 @@ impl<R> WebsocketClient<R> for TungsteniteClient<R> where R: WebsocketResource {
 impl From<tungstenite::protocol::Message> for WebsocketMessage {
     fn from(message: tungstenite::protocol::Message) -> Self {
         match message {
-            tungstenite::protocol::Message::Text(text)      => WebsocketMessage::Text(text),
-            tungstenite::protocol::Message::Binary(bytes)   => WebsocketMessage::Binary(bytes),
-            tungstenite::protocol::Message::Ping(bytes)     => WebsocketMessage::Ping(bytes),
-            tungstenite::protocol::Message::Pong(bytes)     => WebsocketMessage::Pong(bytes),
+            tungstenite::protocol::Message::Text(text) => WebsocketMessage::Text(text),
+            tungstenite::protocol::Message::Binary(bytes) => WebsocketMessage::Binary(bytes),
+            tungstenite::protocol::Message::Ping(bytes) => WebsocketMessage::Ping(bytes),
+            tungstenite::protocol::Message::Pong(bytes) => WebsocketMessage::Pong(bytes),
         }
     }
 }
@@ -429,10 +463,10 @@ impl From<tungstenite::protocol::Message> for WebsocketMessage {
 impl From<WebsocketMessage> for tungstenite::protocol::Message {
     fn from(message: WebsocketMessage) -> Self {
         match message {
-            WebsocketMessage::Text(text)    => tungstenite::protocol::Message::Text(text),
+            WebsocketMessage::Text(text) => tungstenite::protocol::Message::Text(text),
             WebsocketMessage::Binary(bytes) => tungstenite::protocol::Message::Binary(bytes),
-            WebsocketMessage::Ping(bytes)   => tungstenite::protocol::Message::Ping(bytes),
-            WebsocketMessage::Pong(bytes)   => tungstenite::protocol::Message::Pong(bytes),
+            WebsocketMessage::Ping(bytes) => tungstenite::protocol::Message::Ping(bytes),
+            WebsocketMessage::Pong(bytes) => tungstenite::protocol::Message::Pong(bytes),
         }
     }
 }

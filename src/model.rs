@@ -2,13 +2,12 @@ use chrono::{DateTime, Utc};
 use num_traits::*;
 use rust_decimal::Decimal as d128;
 use std::fmt;
-use std::iter::{FromIterator};
+use std::iter::FromIterator;
 use std::ops::{Deref, DerefMut};
-use std::str::{FromStr};
+use std::str::FromStr;
 use uuid::Uuid;
 
 pub type ID = i64;
-
 
 #[derive(Debug, Hash, PartialEq, PartialOrd, Eq, Ord, Clone, Deserialize, Serialize)]
 pub struct Credential {
@@ -32,8 +31,8 @@ impl CurrencyPair {
     }
 }
 
-pub const BTCUSD:  CurrencyPair = CurrencyPair(Currency::BTC, Currency::USD);
-pub const ETHBTC:  CurrencyPair = CurrencyPair(Currency::ETH, Currency::BTC);
+pub const BTCUSD: CurrencyPair = CurrencyPair(Currency::BTC, Currency::USD);
+pub const ETHBTC: CurrencyPair = CurrencyPair(Currency::ETH, Currency::BTC);
 pub const BTCUSDT: CurrencyPair = CurrencyPair(Currency::BTC, Currency::USDT);
 
 #[derive(Debug, Hash, PartialEq, PartialOrd, Eq, Ord, Clone, Copy, Deserialize, Serialize)]
@@ -137,7 +136,6 @@ impl fmt::Display for Currency {
         write!(f, "{:?}", self)
     }
 }
-
 
 #[derive(Debug, Hash, Eq, PartialEq, Clone, Serialize, Deserialize)]
 pub struct ParseCurrencyError(String);
@@ -269,10 +267,7 @@ pub struct Balance {
 
 impl Balance {
     pub fn new(currency: Currency, balance: d128) -> Self {
-        Balance {
-            currency,
-            balance,
-        }
+        Balance { currency, balance }
     }
 }
 
@@ -297,19 +292,19 @@ pub enum NewOrderInstruction {
         price: d128,
         quantity: d128,
         time_in_force: TimeInForce,
-    }
+    },
 }
 
-// Market buy orders are placed in one of two ways for each exchange, 
+// Market buy orders are placed in one of two ways for each exchange,
 // and so they're tricky (impossible?) to implement properly in an
-// abstracted way. This doesn't even matter at the moment because 
+// abstracted way. This doesn't even matter at the moment because
 // we should only need Limit orders for arbitrage.
 //
 // Market order examples:
 // Gemini:
 //   Sell 1BTC for CURRENT_PRICE
 //   Buy  1000USD worth of BTC for CURRENT_PRICE
-// Binance: 
+// Binance:
 //   Sell 1BTC for CURRENT_PRICE
 //   Buy  1BTC for CURRENT_PRICE
 // GDAX:
@@ -327,7 +322,6 @@ pub enum NewOrderInstruction {
 //     pub funds: d128,
 // }
 
-
 #[derive(Debug, Hash, Eq, PartialEq, Copy, Clone, Serialize, Deserialize)]
 pub enum TimeInForce {
     /// GTT
@@ -343,12 +337,12 @@ pub enum TimeInForce {
 
     /// [IOC](https://en.wikipedia.org/wiki/Immediate_or_cancel)
     ///
-    /// Order must be immediately executed or cancelled. 
+    /// Order must be immediately executed or cancelled.
     /// Unlike `FillOrKill`, IOC orders can be partially filled.
     ImmediateOrCancel,
 
     /// [FOK](https://en.wikipedia.org/wiki/Fill_or_kill)
-    /// 
+    ///
     /// Order must be immediately executed or cancelled.
     /// Unlike `ImmediateOrCancel`, FOK orders *require* the full quantity to be executed.
     FillOrKill,
@@ -370,7 +364,7 @@ pub enum OrderStatus {
     Pending,
 
     /// The order was previously `Open` and voluntarily or involuntarily
-    /// cancelled before being filled for some specified reason. 
+    /// cancelled before being filled for some specified reason.
     Closed(String),
 }
 
@@ -391,7 +385,7 @@ pub enum OrderInstruction {
         original_quantity: d128,
         remaining_quantity: d128,
         time_in_force: TimeInForce,
-    }
+    },
 }
 
 impl From<NewOrder> for Order {
@@ -410,14 +404,16 @@ impl From<NewOrder> for Order {
 impl From<NewOrderInstruction> for OrderInstruction {
     fn from(new_order_instruction: NewOrderInstruction) -> Self {
         match new_order_instruction {
-            NewOrderInstruction::Limit{price, quantity, time_in_force} => {
-                OrderInstruction::Limit {
-                    price: price,
-                    original_quantity: quantity,
-                    remaining_quantity: quantity,
-                    time_in_force: time_in_force,
-                }
-            }
+            NewOrderInstruction::Limit {
+                price,
+                quantity,
+                time_in_force,
+            } => OrderInstruction::Limit {
+                price: price,
+                original_quantity: quantity,
+                remaining_quantity: quantity,
+                time_in_force: time_in_force,
+            },
         }
     }
 }
@@ -490,8 +486,10 @@ impl DerefMut for Asks {
 }
 
 impl FromIterator<Offer> for Asks {
-    fn from_iter<I>(offers: I) -> Self 
-    where I: IntoIterator<Item=Offer> {
+    fn from_iter<I>(offers: I) -> Self
+    where
+        I: IntoIterator<Item = Offer>,
+    {
         let mut offers = offers.into_iter();
 
         let (size, _) = offers.size_hint();
@@ -545,8 +543,10 @@ impl DerefMut for Bids {
 }
 
 impl FromIterator<Offer> for Bids {
-    fn from_iter<I>(offers: I) -> Self 
-    where I: IntoIterator<Item=Offer> {
+    fn from_iter<I>(offers: I) -> Self
+    where
+        I: IntoIterator<Item = Offer>,
+    {
         let mut offers = offers.into_iter();
 
         let (size, _) = offers.size_hint();
@@ -568,10 +568,7 @@ pub struct Orderbook {
 
 impl Orderbook {
     pub fn new(asks: Asks, bids: Bids) -> Self {
-        Orderbook {
-            asks,
-            bids,
-        }
+        Orderbook { asks, bids }
     }
 
     pub fn remove(&mut self, side: Side, offer: &Offer) -> Option<Offer> {
@@ -668,7 +665,7 @@ impl Exchange {
 
     pub fn apply(&mut self, event: ExchangeEvent) {
         match event {
-            ExchangeEvent::Heartbeat => {},
+            ExchangeEvent::Heartbeat => {}
             ExchangeEvent::OrderbookOfferUpdated(product, side, offer) => {
                 self.market_mut(&product)
                     .unwrap()
@@ -701,11 +698,9 @@ impl Exchange {
                     None => panic!(),
                 }
             }
-            ExchangeEvent::Batch(events) => {
-                for event in events {
-                    self.apply(event)
-                }
-            }
+            ExchangeEvent::Batch(events) => for event in events {
+                self.apply(event)
+            },
             ExchangeEvent::Unimplemented(event) => {}
         }
     }
@@ -763,7 +758,7 @@ pub enum ExchangeEvent {
     OrderFilled(Order),
     OrderClosed(Order),
     Unimplemented(String),
-    Batch(Vec<ExchangeEvent>)
+    Batch(Vec<ExchangeEvent>),
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
