@@ -541,9 +541,12 @@ impl<Client: HttpClient> Exchange for Exmo<Client> {
 
 // pub struct Exmo {
 //     credential: Credential,
-//     orderbook_channel: (mpsc::Sender<(ccex::CurrencyPair, FutureLock<Result<ccex::Orderbook, Error>>)>, ()),
-//     place_order_channel: (mpsc::Sender<(ccex::NewOrder, FutureLock<Result<ccex::Order, Error>>)>, ()),
-//     balances_channel: (mpsc::Sender<((), FutureLock<Result<Vec<ccex::Balance>, Error>>)>, ()),
+//     orderbook_channel: (mpsc::Sender<(ccex::CurrencyPair,
+//     FutureLock<Result<ccex::Orderbook, Error>>)>, ()),
+//     place_order_channel: (mpsc::Sender<(ccex::NewOrder,
+//     FutureLock<Result<ccex::Order, Error>>)>, ()),
+//     balances_channel: (mpsc::Sender<((),
+//     FutureLock<Result<Vec<ccex::Balance>, Error>>)>, ()),
 // }
 //
 // impl Exmo {

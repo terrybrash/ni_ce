@@ -41,7 +41,6 @@ use std::sync::mpsc;
 use std::collections::HashMap;
 use crate as ccex;
 
-
 // /// The interface to an exchange.
 // pub trait Exchange<C> where C: HttpClient {
 // 	fn name(&self) -> &'static str;
@@ -101,10 +100,8 @@ pub trait Exchange {
     fn get_balances(&mut self, credential: &ccex::Credential) -> Result<Vec<ccex::Balance>, Error>;
 }
 
-fn dual_channel<A, B>() -> (
-    (mpsc::Sender<A>, mpsc::Receiver<B>),
-    (mpsc::Sender<B>, mpsc::Receiver<A>),
-) {
+type Channel<S, R> = (mpsc::Sender<S>, mpsc::Receiver<R>);
+fn dual_channel<A, B>() -> (Channel<A, B>, Channel<B, A>) {
     let (sender_a, receiver_a) = mpsc::channel();
     let (sender_b, receiver_b) = mpsc::channel();
     let channel_ab = (sender_a, receiver_b);
