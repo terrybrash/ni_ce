@@ -1,24 +1,19 @@
-use api::{Header, Headers, HttpClient, HttpRequest, HttpResponse, Method, NeedsAuthentication,
-          Payload, PrivateRequest, Query, QueryBuilder, RestResource};
+use api::{Header, Headers, HttpClient, HttpRequest, HttpResponse, Method, Payload, QueryBuilder};
 use chrono::Utc;
 use crate as ccex;
-use failure::{err_msg, Error, ResultExt};
+use failure::{Error, ResultExt};
 use hex;
 use hmac::{Hmac, Mac};
 use rust_decimal::Decimal as d128;
 use serde::de::DeserializeOwned;
 use serde_json;
 use sha2::Sha512;
-use std::cell::RefCell;
 use std::collections::HashMap;
 use std::convert::{TryFrom, TryInto};
 use std::fmt::{self, Display, Formatter};
 use std::str::FromStr;
-use std::sync::{mpsc, Arc, Mutex};
-use std::thread::{self, JoinHandle};
-use std::time::{self, Duration};
 use url::Url;
-use {dual_channel, Exchange, Future, FutureLock};
+use Exchange;
 
 #[derive(Fail, Debug, Hash, PartialEq, PartialOrd, Eq, Ord, Clone, Deserialize, Serialize)]
 pub enum CurrencyConversionError {
@@ -364,7 +359,7 @@ impl<Client: HttpClient> Exchange for Exmo<Client> {
                     let balance = ccex::Balance::new(currency, balance);
                     balances.push(balance);
                 }
-                Err(ParseCurrencyError::InvalidOrUnsupportedCurrency(currency)) => {
+                Err(ParseCurrencyError::InvalidOrUnsupportedCurrency(_)) => {
                     // The currency isn't support. We'll just silently skip it.
                 }
             }
@@ -431,10 +426,10 @@ impl<Client: HttpClient> Exchange for Exmo<Client> {
             ccex::Side::Bid => OrderInstruction::LimitBuy,
         };
         let (price, quantity) = match order.instruction {
+            // Exmo only uses limit orders
             ccex::NewOrderInstruction::Limit {
                 price, quantity, ..
             } => (price, quantity),
-            _ => return Err(err_msg("only limit orders are supported on exmo")),
         };
 
         let query = QueryBuilder::with_capacity(5)
@@ -455,8 +450,10 @@ impl<Client: HttpClient> Exchange for Exmo<Client> {
             query: Some(query),
         };
 
-        let http_response = self.http_client.send(&http_request)?;
-        let response: Order = Self::deserialize_private_response(&http_response)?;
+        let _http_response = self.http_client.send(&http_request)?;
+        // Note: Exmo's `Order` doesn't contain anything useful so we don't need
+        // to use it.
+        // let response: Order = Self::deserialize_private_response(&http_response)?;
 
         Ok(order.into())
     }

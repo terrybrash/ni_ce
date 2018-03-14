@@ -413,10 +413,10 @@ where
 {
     type Error = tungstenite::error::Error;
 
-    fn connect(url: Url, request: R) -> Result<Self, tungstenite::error::Error> {
+    fn connect(url: Url, _request: R) -> Result<Self, tungstenite::error::Error> {
         use tungstenite::handshake::client::Request;
 
-        let mut tungstenite_request = Request::from(url);
+        let tungstenite_request = Request::from(url);
         // for header in request.headers() {
         //     match header.value {
         //         HeaderValue::String(value) => tungstenite_request.add_header(Cow::from(header.name), Cow::from(value)),

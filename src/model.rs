@@ -490,7 +490,7 @@ impl FromIterator<Offer> for Asks {
     where
         I: IntoIterator<Item = Offer>,
     {
-        let mut offers = offers.into_iter();
+        let offers = offers.into_iter();
 
         let (size, _) = offers.size_hint();
         let mut asks = Asks::with_capacity(size);
@@ -547,7 +547,7 @@ impl FromIterator<Offer> for Bids {
     where
         I: IntoIterator<Item = Offer>,
     {
-        let mut offers = offers.into_iter();
+        let offers = offers.into_iter();
 
         let (size, _) = offers.size_hint();
         let mut bids = Bids::with_capacity(size);
@@ -701,7 +701,7 @@ impl Exchange {
             ExchangeEvent::Batch(events) => for event in events {
                 self.apply(event)
             },
-            ExchangeEvent::Unimplemented(event) => {}
+            ExchangeEvent::Unimplemented(_event) => {}
         }
     }
 }
