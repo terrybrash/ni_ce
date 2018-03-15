@@ -431,7 +431,6 @@ impl<Client: HttpClient> Exchange for Exmo<Client> {
                 price, quantity, ..
             } => (price, quantity),
         };
-
         let query = QueryBuilder::with_capacity(5)
             .param("nonce", Self::nonce().to_string())
             .param("pair", exmo_product.to_string())

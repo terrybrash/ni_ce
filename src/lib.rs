@@ -28,7 +28,7 @@ pub mod api;
 pub mod future;
 
 pub mod exmo;
-// pub mod liqui;
+pub mod liqui;
 // pub mod gemini;
 
 mod model;
