@@ -132,45 +132,6 @@ impl TryFrom<Currency> for ccex::Currency {
     }
 }
 
-// #[derive(Debug, Hash, PartialEq, PartialOrd, Eq, Ord, Clone, Deserialize, Serialize)]
-// pub struct CurrencyString(String);
-//
-// impl From<Currency> for CurrencyString {
-// 	fn from(currency: Currency) -> CurrencyString {
-// 		CurrencyString(currency.to_string())
-// 	}
-// }
-//
-// impl TryFrom<CurrencyString> for Currency {
-// 	type Error = Error;
-// 	fn try_from(CurrencyString(string): CurrencyString) -> Result<Self, Self::Error> {
-// 		string.parse()
-// 	}
-// }
-//
-// #[derive(Debug, Hash, PartialEq, PartialOrd, Eq, Ord, Clone, Deserialize, Serialize)]
-// pub struct CurrencyPairString(String);
-//
-// impl From<CurrencyPair> for CurrencyPairString {
-// 	fn from(pair: CurrencyPair) -> Self {
-// 		CurrencyPairString(pair.to_string())
-// 	}
-// }
-//
-// impl TryFrom<CurrencyPairString> for CurrencyPair {
-// 	type Error = Error;
-// 	fn try_from(CurrencyPairString(string): CurrencyPairString) -> Result<Self, Self::Error> {
-// 		string.parse()
-// 	}
-// }
-//
-// impl Deref for CurrencyPairString {
-// 	type Target = str;
-// 	fn deref(&self) -> &str {
-// 		&self.0
-// 	}
-// }
-
 #[derive(Debug, Hash, PartialEq, PartialOrd, Eq, Ord, Clone, Deserialize, Serialize)]
 pub struct CurrencyPair(String);
 impl TryFrom<ccex::CurrencyPair> for CurrencyPair {
@@ -197,67 +158,11 @@ impl Display for CurrencyPair {
     }
 }
 
-// #[derive(Debug, Hash, PartialEq, PartialOrd, Eq, Ord, Clone, Copy, Deserialize, Serialize)]
-// pub struct CurrencyPair(pub Currency, pub Currency);
-//
-// impl From<ccex::CurrencyPair> for CurrencyPair {
-//     type Error = Error;
-//     fn from(ccex::CurrencyPair(base, quote): ccex::CurrencyPair) -> Result<Self, Self::Error> {
-//         CurrencyPair(base.into(), quote.into())
-//     }
-// }
-//
-// impl From<CurrencyPair> for ccex::CurrencyPair {
-//     type Error = Error;
-//     fn from(CurrencyPair(base, quote): CurrencyPair) -> Result<Self, Self::Error> {
-//         ccex::CurrencyPair(base.into(), quote.into())
-//     }
-// }
-//
-// impl FromStr for CurrencyPair {
-// 	type Err = Error;
-// 	fn from_str(s: &str) -> Result<Self, Self::Err> {
-// 		let currencies: Vec<&str> = s.split('_').collect();
-// 		let (base, quote) = (&currencies[0], &currencies[1]);
-// 		let currency_pair = CurrencyPair(base.parse()?, quote.parse()?);
-// 		Ok(currency_pair)
-// 	}
-// }
-//
-// impl Display for CurrencyPair {
-// 	fn fmt(&self, f: &mut Formatter) -> Result<(), fmt::Error> {
-// 		let CurrencyPair(base, quote) = *self;
-// 		let (base, quote) = (base.to_string(), quote.to_string());
-// 		f.write_str([&base, "_", &quote].concat().to_lowercase().as_str())
-// 	}
-// }
-
-// #[derive(Debug, Hash, PartialEq, PartialOrd, Eq, Ord, Clone)]
-// pub struct GetDepth<'a> {
-// 	pub product: &'a CurrencyPairString,
-// }
-
 #[derive(Debug, PartialEq, PartialOrd, Clone, Deserialize, Serialize)]
 pub struct Orderbook {
     pub bids: Vec<(f64, f64)>,
     pub asks: Vec<(f64, f64)>,
 }
-
-// impl<'a> RestResource for GetDepth<'a> {
-// 	type Response = HashMap<CurrencyPairString, Orderbook>;
-//
-// 	fn method(&self) -> Method {
-// 		Method::Get
-// 	}
-//
-// 	fn path(&self) -> String {
-// 		["/api/3/depth/", &self.product].concat()
-// 	}
-//
-// 	fn deserialize(&self, response: &HttpResponse) -> Result<Self::Response, Error> {
-// 		deserialize_public_response(response)
-// 	}
-// }
 
 #[derive(Debug, PartialEq, Clone, Deserialize, Serialize)]
 pub struct Info {
@@ -300,9 +205,7 @@ pub struct OrderPlacement {
     funds: HashMap<Currency, f64>,
 }
 
-pub type OrderId = String;
 
-// #[derive(Debug, PartialEq, PartialOrd, Clone, Deserialize, Serialize)]
 // pub struct GetActiveOrders {
 // 	pair: CurrencyPair,
 // 	nonce: u32,
@@ -319,6 +222,7 @@ pub struct Order {
     pub timestamp_created: u64,
 }
 
+pub type OrderId = String;
 // impl<'a> NeedsAuthentication<&'a Credential> for GetActiveOrders {}
 // impl<'a> RestResource for PrivateRequest<GetActiveOrders, &'a Credential> {
 // 	type Response = HashMap<OrderId, Order>;
@@ -886,238 +790,3 @@ impl<Client: HttpClient> Exchange for Liqui<Client> {
 // 		client: Client::new(),
 // 	})
 // }
-//
-// fn async_rest_client(&self) -> Box<AsyncExchangeRestClient> {
-// 	let sync_client = SyncLiquiRestClient {
-// 		credential: self.credential.clone(),
-// 		host: Url::parse("https://api.liqui.io").unwrap(),
-// 		client: Client::new(),
-// 	};
-// 	let async_client = AsyncLiquiRestClient::from(sync_client);
-// 	Box::new(async_client)
-// }
-
-// #[derive(Debug, Clone)]
-// pub struct SyncLiquiRestClient<Client>
-// where Client: HttpClient {
-// 	pub credential: Credential,
-// 	pub host: Url,
-// 	pub client: Client,
-// }
-//
-// impl<Client> SyncExchangeRestClient for SyncLiquiRestClient<Client>
-// where Client: HttpClient {
-//     fn balances(&mut self) -> Result<Vec<ccex::Balance>, Error> {
-//         let request = GetInfo {
-//             nonce: nonce(),
-//         };
-//         let request = request.authenticate(&self.credential);
-//         let response = self.client.send(&self.host, request)?;
-//
-//         response.funds.into_iter()
-//         	// If a currency can't be converted, it means it's been newly
-//         	// added to Liqui and hasn't been added to the `Currency` enum. In
-//         	// that case, ignoring it is fine.
-//         	.filter_map(|(currency, amount)| {
-//         		match Currency::try_from(currency) {
-//         			Ok(currency) => Some((currency, amount)),
-//         			Err(_) => None
-//         		}
-//         	})
-//         	.map(|(currency, amount)| {
-//         		let amount = d128::from_f64(amount)
-//         			.ok_or_else(|| format_err!("Couldn't convert {} into a decimal", amount))?;
-//         		let balance = ccex::Balance::new(currency.into(), amount);
-//         		Ok(balance)
-//         	})
-//         	.collect()
-//     }
-//
-//     fn orderbook(&mut self, product: ccex::CurrencyPair) -> Result<ccex::Orderbook, Error> {
-//     	let product: CurrencyPairString = CurrencyPair::try_from(product)?.into();
-// 	    let request = GetDepth {
-// 	    	product: &product,
-// 	    };
-// 	    let response = self.client.send(&self.host, request)?;
-//
-// 	    let orderbook = response.get(&product)
-// 	    	.ok_or_else(|| format_err!("The request succeeded but an orderbook for {:?} wasn't returned", &product))?;
-//
-// 	    let asks: Result<ccex::Asks, Error> = orderbook.asks.iter()
-// 	    	.map(|&(price, amount)| {
-// 	    		let price = d128::from_f64(price).ok_or_else(|| format_err!("Couldn't convert {} into a decimal", price))?;
-// 	    		let amount = d128::from_f64(amount).ok_or_else(|| format_err!("Couldn't convert {} into a decimal", amount))?;
-// 	    		Ok(ccex::Offer::new(price, amount))
-// 	    	})
-// 	    	.collect();
-//
-// 	    let bids: Result<ccex::Bids, Error> = orderbook.bids.iter()
-// 	    	.map(|&(price, amount)| {
-// 	    		let price = d128::from_f64(price).ok_or_else(|| format_err!("Couldn't convert {} into a decimal", price))?;
-// 	    		let amount = d128::from_f64(amount).ok_or_else(|| format_err!("Couldn't convert {} into a decimal", amount))?;
-// 	    		Ok(ccex::Offer::new(price, amount))
-// 	    	})
-// 	    	.collect();
-//
-// 	    Ok(ccex::Orderbook::new(asks?, bids?))
-// 	}
-//
-// 	// todo: cleanup
-//     fn place_order(&mut self, order: ccex::NewOrder) -> Result<ccex::Order, Error> {
-//     	let (price, quantity) = match order.instruction {
-//     		ccex::NewOrderInstruction::Limit {price, quantity, ..} => (price, quantity),
-//     		instruction => unimplemented!("liqui doesn't support {:?}", instruction),
-//     	};
-//
-//     	let request = PlaceOrder {
-//     		pair: order.product.try_into()?,
-//     		side: order.side.into(),
-//     		rate: price.clone(),
-//     		amount: quantity,
-//     		nonce: nonce(),
-//     	};
-// 		let request = request.authenticate(&self.credential);
-// 		let response = self.client.send(&self.host, request).unwrap();
-//
-// 		let order = ccex::Order {
-// 			id: Some(order.id),
-// 			server_id: Some(response.order_id.to_string()),
-// 			side: order.side,
-// 			product: order.product,
-// 			status: ccex::OrderStatus::Open,
-// 			instruction: ccex::OrderInstruction::Limit {
-// 				price: price,
-// 				original_quantity: d128::from_f64(response.received).unwrap() + d128::from_f64(response.remains).unwrap(),
-// 				remaining_quantity: d128::from_f64(response.remains).unwrap(),
-// 				time_in_force: ccex::TimeInForce::GoodTillCancelled,
-// 			}
-// 		};
-// 		Ok(order)
-//     }
-//
-//     fn orders(&mut self, product: ccex::CurrencyPair) -> Result<Vec<ccex::Order>, Error> {
-//     	let request = GetActiveOrders {
-//     		pair: product.try_into()?,
-//     		nonce: nonce(),
-//     	};
-//     	let request = request.authenticate(&self.credential);
-//     	let response = self.client.send(&self.host, request)?;
-//
-//     	// let response = match response {
-//     	// 	serde_json::Value::Object(response) => response,
-//     	// 	value => panic!("expected a serde_json::Value::Object; but got {:?}", value)
-//     	// };
-//
-//     	let mut orders = Vec::with_capacity(response.len());
-//     	for (id, order) in response.into_iter() {
-//     		let order = ccex::Order {
-//     			id: None,
-//     			server_id: Some(id),
-//     			side: order.side.into(),
-//     			product: order.pair.parse::<CurrencyPair>()?.try_into()?,
-//     			status: ccex::OrderStatus::Open,
-//     			instruction: ccex::OrderInstruction::Limit {
-//     				price: d128::from_f64(order.rate).unwrap(),
-//     				original_quantity: d128::zero(),
-//     				remaining_quantity: d128::from_f64(order.amount).unwrap(),
-//     				time_in_force: ccex::TimeInForce::GoodTillCancelled,
-//     			}
-//     		};
-//     		orders.push(order);
-//     	}
-//     	Ok(orders)
-//     }
-// }
-
-// pub struct AsyncLiquiRestClient {
-// 	pub threads: Vec<JoinHandle<()>>,
-// 	pub orderbook_channel:		RefCell<(mpsc::Sender<ccex::CurrencyPair>, 	mpsc::Receiver<Result<ccex::Orderbook, Error>>)>,
-// 	pub place_order_channel: 	RefCell<(mpsc::Sender<ccex::NewOrder>, 		mpsc::Receiver<Result<ccex::Order, Error>>)>,
-// 	pub balances_channel: 		RefCell<(mpsc::Sender<()>, 					mpsc::Receiver<Result<Vec<ccex::Balance>, Error>>)>,
-// }
-//
-// impl AsyncExchangeRestClient for AsyncLiquiRestClient {
-// 	fn balances<'a>(&'a self) -> Future<Result<Vec<ccex::Balance>, Error>> {
-// 		let (ref mut sender, _) = *self.balances_channel.borrow_mut();
-// 		sender.send(()).unwrap();
-//
-// 		Future::new(move || {
-// 			let (_, ref mut receiver) = *self.balances_channel.borrow_mut();
-// 			receiver.recv().unwrap()
-// 		})
-// 	}
-//
-// 	fn orderbook<'a>(&'a self, product: ccex::CurrencyPair) -> Future<Result<ccex::Orderbook, Error>> {
-// 		let (ref mut sender, _) = *self.orderbook_channel.borrow_mut();
-// 		sender.send(product).unwrap();
-//
-// 		Future::new(move || {
-// 			let (_, ref receiver) = *self.orderbook_channel.borrow_mut();
-// 			receiver.recv().unwrap()
-// 		})
-// 	}
-//
-// 	fn orders<'a>(&'a self, product: ccex::CurrencyPair) -> Future<Result<Vec<ccex::Order>, Error>> {
-// 		unimplemented!()
-// 	}
-//
-// 	fn place_order<'a>(&'a self, new_order: ccex::NewOrder) -> Future<Result<ccex::Order, Error>> {
-// 		let (ref mut sender, _) = *self.place_order_channel.borrow_mut();
-// 		sender.send(new_order).unwrap();
-//
-// 		Future::new(move || {
-// 			let (_, ref mut receiver) = *self.place_order_channel.borrow_mut();
-// 			receiver.recv().unwrap()
-// 		})
-// 	}
-// }
-//
-// impl<Client> From<SyncLiquiRestClient<Client>> for AsyncLiquiRestClient
-// where Client: HttpClient {
-// 	fn from(client: SyncLiquiRestClient<Client>) -> Self {
-// 		let (orderbook_channel, worker_orderbook_channel) = dual_channel();
-// 		let orderbook_thread = {
-// 			let mut client = client.clone();
-// 			let (mut sender, mut receiver) = worker_orderbook_channel;
-// 			thread::spawn(move || {
-// 				for product in receiver.iter() {
-// 					sender.send(client.orderbook(product)).unwrap();
-// 				}
-// 			})
-// 		};
-//
-// 		let (place_order_channel, worker_place_order_channel) = dual_channel();
-// 		let place_order_thread = {
-// 			let mut client = client.clone();
-// 			let (mut sender, mut receiver) = worker_place_order_channel;
-// 			thread::spawn(move || {
-// 				for new_order in receiver.iter() {
-// 					sender.send(client.place_order(new_order)).unwrap();
-// 				}
-// 			})
-// 		};
-//
-// 		let (balances_channel, worker_balances_channel) = dual_channel();
-// 		let balances_thread = {
-// 			let mut client = client.clone();
-// 			let (mut sender, mut receiver) = worker_balances_channel;
-// 			thread::spawn(move || {
-// 				for _ in receiver.iter() {
-// 					sender.send(client.balances()).unwrap();
-// 				}
-// 			})
-// 		};
-//
-// 		AsyncLiquiRestClient {
-// 			orderbook_channel: RefCell::new(orderbook_channel),
-// 			place_order_channel: RefCell::new(place_order_channel),
-// 			balances_channel: RefCell::new(balances_channel),
-// 			threads: vec![
-// 				orderbook_thread,
-// 				place_order_thread,
-// 				balances_thread,
-// 			],
-// 		}
-// 	}
-// }
-//
