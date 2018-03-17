@@ -1,9 +1,8 @@
 use crate as ccex;
-use {Exchange};
-use api::{Header, Headers, HttpClient, HttpRequest, HttpResponse, Method, NeedsAuthentication,
-          Payload, PrivateRequest, Query, RestResource};
+use Exchange;
+use api::{Header, Headers, HttpClient, HttpRequest, HttpResponse, Method, Payload, Query};
 use chrono::Utc;
-use failure::{Error, ResultExt};
+use failure::{err_msg, Error, ResultExt};
 use hex;
 use hmac::{Hmac, Mac};
 use num_traits::*;
@@ -14,13 +13,8 @@ use sha2::Sha512;
 use std::collections::HashMap;
 use std::convert::{TryFrom, TryInto};
 use std::fmt::{self, Display, Formatter};
-use std::str::FromStr;
-use std::time::Duration;
 use url::Url;
 use std::cell::RefCell;
-use std::sync::mpsc;
-use std::thread::{self, JoinHandle};
-use std::ops::Deref;
 
 #[derive(Debug, Hash, PartialEq, PartialOrd, Eq, Ord, Clone, Deserialize, Serialize)]
 struct PrivateResponse<T> {
@@ -281,14 +275,14 @@ impl<Client: HttpClient> Liqui<Client> {
         let response: serde_json::Value = match response.body {
             Some(Payload::Text(ref body)) => serde_json::from_str(body)?,
             Some(Payload::Binary(ref body)) => serde_json::from_slice(body)?,
-            None => return Err(format_err!("body is empty")),
+            None => return Err(err_msg("body is empty")),
         };
 
         let is_success = response
             .as_object()
             .and_then(|obj| obj.get("success"))
-            .and_then(|obj| obj.as_u64())
-            .map_or(true, |obj| if obj == 0 { false } else { true });
+            .and_then(|is_success| is_success.as_u64())
+            .map_or(true, |is_success| is_success == 1);
 
         if is_success {
             let response: T = serde_json::from_value(response)?;
@@ -311,11 +305,11 @@ impl<Client: HttpClient> Liqui<Client> {
                     body
                 ))
             }
-            None => return Err(format_err!("the body is empty")),
+            None => return Err(err_msg("the body is empty")),
         };
 
-        let response: PrivateResponse<T> = serde_json::from_str(&response)
-            .with_context(|e| format!("failed to deserialize: \"{}\"", response))?;
+        let response: PrivateResponse<T> = serde_json::from_str(response)
+            .with_context(|_| format!("failed to deserialize: \"{}\"", response))?;
 
         response
             .into_result()
@@ -345,7 +339,7 @@ impl<Client: HttpClient> Liqui<Client> {
         // of 1) only allowing one request per millisecond and 2) expiring after
         // ~50 days
         let now = Utc::now();
-        (now.timestamp() as u32 - 1521186749u32) * 1000 + now.timestamp_subsec_millis()
+        (now.timestamp() as u32 - 1_521_186_749u32) * 1000 + now.timestamp_subsec_millis()
     }
 
     fn get_info(&self) -> Result<Info, Error> {
@@ -463,11 +457,11 @@ impl<Client: HttpClient> Exchange for Liqui<Client> {
     }
 
     fn place_order(&self, order: ccex::NewOrder) -> Result<ccex::Order, Error> {
+        // Note: Liqui only supports limit orders
         let (price, quantity) = match order.instruction {
             ccex::NewOrderInstruction::Limit {
                 price, quantity, ..
             } => (price, quantity),
-            instruction => unimplemented!("liqui doesn't support {:?}", instruction),
         };
         let product: CurrencyPair = order.product.try_into()?;
         let side: Side = order.side.into();
@@ -501,7 +495,7 @@ impl<Client: HttpClient> Exchange for Liqui<Client> {
             product: order.product,
             status: ccex::OrderStatus::Open,
             instruction: ccex::OrderInstruction::Limit {
-                price: price,
+                price,
                 original_quantity: d128::from_f64(placed_order.received).unwrap()
                     + d128::from_f64(placed_order.remains).unwrap(),
                 remaining_quantity: d128::from_f64(placed_order.remains).unwrap(),
@@ -558,231 +552,230 @@ impl<Client: HttpClient> Exchange for Liqui<Client> {
     }
 
     fn min_quantity(&self, product: ccex::CurrencyPair) -> Option<d128> {
+        use Currency::*;
+        use CurrencyPair;
         match product {
-            ccex::CurrencyPair(ccex::Currency::LTC, ccex::Currency::BTC) => Some(d128::new(1, 8)),
-            ccex::CurrencyPair(ccex::Currency::STEEM, ccex::Currency::BTC) => Some(d128::new(1, 3)),
-            ccex::CurrencyPair(ccex::Currency::SBD, ccex::Currency::BTC) => Some(d128::new(1, 3)),
-            ccex::CurrencyPair(ccex::Currency::DASH, ccex::Currency::BTC) => Some(d128::new(1, 8)),
-            ccex::CurrencyPair(ccex::Currency::ANS, ccex::Currency::BTC) => Some(d128::new(1, 8)),
-            ccex::CurrencyPair(ccex::Currency::DCT, ccex::Currency::BTC) => Some(d128::new(1, 8)),
-            ccex::CurrencyPair(ccex::Currency::ICN, ccex::Currency::BTC) => Some(d128::new(1, 8)),
-            ccex::CurrencyPair(ccex::Currency::ETH, ccex::Currency::BTC) => Some(d128::new(1, 8)),
-            ccex::CurrencyPair(ccex::Currency::XZC, ccex::Currency::BTC) => Some(d128::new(1, 8)),
-            ccex::CurrencyPair(ccex::Currency::GOLOS, ccex::Currency::BTC) => Some(d128::new(1, 3)),
-            ccex::CurrencyPair(ccex::Currency::GBG, ccex::Currency::BTC) => Some(d128::new(1, 3)),
-            ccex::CurrencyPair(ccex::Currency::GNT, ccex::Currency::BTC) => Some(d128::new(1, 8)),
-            ccex::CurrencyPair(ccex::Currency::WINGS, ccex::Currency::BTC) => Some(d128::new(1, 8)),
-            ccex::CurrencyPair(ccex::Currency::PLU, ccex::Currency::BTC) => Some(d128::new(1, 8)),
-            ccex::CurrencyPair(ccex::Currency::ROUND, ccex::Currency::BTC) => Some(d128::new(1, 8)),
-            ccex::CurrencyPair(ccex::Currency::VSL, ccex::Currency::BTC) => Some(d128::new(1, 8)),
-            ccex::CurrencyPair(ccex::Currency::WAVES, ccex::Currency::BTC) => Some(d128::new(1, 8)),
-            ccex::CurrencyPair(ccex::Currency::INCNT, ccex::Currency::BTC) => Some(d128::new(1, 4)),
-            ccex::CurrencyPair(ccex::Currency::MLN, ccex::Currency::BTC) => Some(d128::new(1, 8)),
-            ccex::CurrencyPair(ccex::Currency::TIME, ccex::Currency::BTC) => Some(d128::new(1, 8)),
-            ccex::CurrencyPair(ccex::Currency::GNT, ccex::Currency::ETH) => Some(d128::new(1, 8)),
-            ccex::CurrencyPair(ccex::Currency::LTC, ccex::Currency::ETH) => Some(d128::new(1, 8)),
-            ccex::CurrencyPair(ccex::Currency::DASH, ccex::Currency::ETH) => Some(d128::new(1, 8)),
-            ccex::CurrencyPair(ccex::Currency::ICN, ccex::Currency::ETH) => Some(d128::new(1, 8)),
-            ccex::CurrencyPair(ccex::Currency::MLN, ccex::Currency::ETH) => Some(d128::new(1, 8)),
-            ccex::CurrencyPair(ccex::Currency::ROUND, ccex::Currency::ETH) => Some(d128::new(1, 8)),
-            ccex::CurrencyPair(ccex::Currency::WAVES, ccex::Currency::ETH) => Some(d128::new(1, 8)),
-            ccex::CurrencyPair(ccex::Currency::TIME, ccex::Currency::ETH) => Some(d128::new(1, 8)),
-            ccex::CurrencyPair(ccex::Currency::VSL, ccex::Currency::ETH) => Some(d128::new(1, 8)),
-            ccex::CurrencyPair(ccex::Currency::PLU, ccex::Currency::ETH) => Some(d128::new(1, 8)),
-            ccex::CurrencyPair(ccex::Currency::INCNT, ccex::Currency::ETH) => Some(d128::new(1, 8)),
-            ccex::CurrencyPair(ccex::Currency::LTC, ccex::Currency::USDT) => Some(d128::new(1, 3)),
-            ccex::CurrencyPair(ccex::Currency::BTC, ccex::Currency::USDT) => Some(d128::new(1, 5)),
-            ccex::CurrencyPair(ccex::Currency::DASH, ccex::Currency::USDT) => Some(d128::new(1, 4)),
-            ccex::CurrencyPair(ccex::Currency::ETH, ccex::Currency::USDT) => Some(d128::new(1, 4)),
-            ccex::CurrencyPair(ccex::Currency::ICN, ccex::Currency::USDT) => Some(d128::new(1, 2)),
-            ccex::CurrencyPair(ccex::Currency::GNT, ccex::Currency::USDT) => Some(d128::new(1, 2)),
-            ccex::CurrencyPair(ccex::Currency::ROUND, ccex::Currency::USDT) => Some(d128::one()),
-            ccex::CurrencyPair(ccex::Currency::VSL, ccex::Currency::USDT) => Some(d128::new(1, 1)),
-            ccex::CurrencyPair(ccex::Currency::WAVES, ccex::Currency::USDT) => {
+            CurrencyPair(ROUND, USDT) => Some(d128::one()),
+
+            CurrencyPair(VSL, USDT) => Some(d128::new(1, 1)),
+
+            CurrencyPair(ICN, USDT) | CurrencyPair(GNT, USDT) | CurrencyPair(WAVES, USDT) => {
                 Some(d128::new(1, 2))
             }
-            ccex::CurrencyPair(ccex::Currency::MLN, ccex::Currency::USDT) => Some(d128::new(1, 8)),
-            ccex::CurrencyPair(ccex::Currency::TIME, ccex::Currency::USDT) => Some(d128::new(1, 8)),
-            ccex::CurrencyPair(ccex::Currency::REP, ccex::Currency::BTC) => Some(d128::new(1, 8)),
-            ccex::CurrencyPair(ccex::Currency::EDG, ccex::Currency::BTC) => Some(d128::new(1, 8)),
-            ccex::CurrencyPair(ccex::Currency::REP, ccex::Currency::ETH) => Some(d128::new(1, 7)),
-            ccex::CurrencyPair(ccex::Currency::EDG, ccex::Currency::ETH) => Some(d128::new(1, 7)),
-            ccex::CurrencyPair(ccex::Currency::REP, ccex::Currency::USDT) => Some(d128::new(1, 7)),
-            ccex::CurrencyPair(ccex::Currency::EDG, ccex::Currency::USDT) => Some(d128::new(1, 7)),
-            ccex::CurrencyPair(ccex::Currency::RLC, ccex::Currency::BTC) => Some(d128::new(1, 8)),
-            ccex::CurrencyPair(ccex::Currency::RLC, ccex::Currency::ETH) => Some(d128::new(1, 8)),
-            ccex::CurrencyPair(ccex::Currency::RLC, ccex::Currency::USDT) => Some(d128::new(1, 8)),
-            ccex::CurrencyPair(ccex::Currency::TRST, ccex::Currency::BTC) => Some(d128::new(1, 8)),
-            ccex::CurrencyPair(ccex::Currency::TRST, ccex::Currency::ETH) => Some(d128::new(1, 8)),
-            ccex::CurrencyPair(ccex::Currency::TRST, ccex::Currency::USDT) => Some(d128::new(1, 8)),
-            ccex::CurrencyPair(ccex::Currency::WINGS, ccex::Currency::ETH) => Some(d128::new(1, 8)),
-            ccex::CurrencyPair(ccex::Currency::WINGS, ccex::Currency::USDT) => {
-                Some(d128::new(1, 8))
+
+            CurrencyPair(STEEM, BTC)
+            | CurrencyPair(SBD, BTC)
+            | CurrencyPair(GOLOS, BTC)
+            | CurrencyPair(GBG, BTC)
+            | CurrencyPair(LTC, USDT) => Some(d128::new(1, 3)),
+
+            CurrencyPair(DASH, USDT) | CurrencyPair(INCNT, BTC) | CurrencyPair(ETH, USDT) => {
+                Some(d128::new(1, 4))
             }
-            ccex::CurrencyPair(ccex::Currency::PLU, ccex::Currency::USDT) => Some(d128::new(1, 8)),
-            ccex::CurrencyPair(ccex::Currency::INCNT, ccex::Currency::USDT) => {
-                Some(d128::new(1, 8))
-            }
-            ccex::CurrencyPair(ccex::Currency::GNO, ccex::Currency::BTC) => Some(d128::new(1, 8)),
-            ccex::CurrencyPair(ccex::Currency::GNO, ccex::Currency::ETH) => Some(d128::new(1, 8)),
-            ccex::CurrencyPair(ccex::Currency::GNO, ccex::Currency::USDT) => Some(d128::new(1, 8)),
-            ccex::CurrencyPair(ccex::Currency::GUP, ccex::Currency::BTC) => Some(d128::new(1, 8)),
-            ccex::CurrencyPair(ccex::Currency::GUP, ccex::Currency::ETH) => Some(d128::new(1, 8)),
-            ccex::CurrencyPair(ccex::Currency::GUP, ccex::Currency::USDT) => Some(d128::new(1, 8)),
-            ccex::CurrencyPair(ccex::Currency::TAAS, ccex::Currency::BTC) => Some(d128::new(1, 8)),
-            ccex::CurrencyPair(ccex::Currency::TAAS, ccex::Currency::ETH) => Some(d128::new(1, 8)),
-            ccex::CurrencyPair(ccex::Currency::TAAS, ccex::Currency::USDT) => Some(d128::new(1, 8)),
-            ccex::CurrencyPair(ccex::Currency::LUN, ccex::Currency::BTC) => Some(d128::new(1, 8)),
-            ccex::CurrencyPair(ccex::Currency::LUN, ccex::Currency::ETH) => Some(d128::new(1, 8)),
-            ccex::CurrencyPair(ccex::Currency::LUN, ccex::Currency::USDT) => Some(d128::new(1, 8)),
-            ccex::CurrencyPair(ccex::Currency::TKN, ccex::Currency::BTC) => Some(d128::new(1, 8)),
-            ccex::CurrencyPair(ccex::Currency::TKN, ccex::Currency::ETH) => Some(d128::new(1, 8)),
-            ccex::CurrencyPair(ccex::Currency::TKN, ccex::Currency::USDT) => Some(d128::new(1, 8)),
-            ccex::CurrencyPair(ccex::Currency::HMQ, ccex::Currency::BTC) => Some(d128::new(1, 8)),
-            ccex::CurrencyPair(ccex::Currency::HMQ, ccex::Currency::ETH) => Some(d128::new(1, 8)),
-            ccex::CurrencyPair(ccex::Currency::HMQ, ccex::Currency::USDT) => Some(d128::new(1, 8)),
-            ccex::CurrencyPair(ccex::Currency::BCAP, ccex::Currency::BTC) => Some(d128::new(1, 8)),
-            ccex::CurrencyPair(ccex::Currency::BCAP, ccex::Currency::ETH) => Some(d128::new(1, 8)),
-            ccex::CurrencyPair(ccex::Currency::BCAP, ccex::Currency::USDT) => Some(d128::new(1, 8)),
-            ccex::CurrencyPair(ccex::Currency::ANT, ccex::Currency::BTC) => Some(d128::new(1, 8)),
-            ccex::CurrencyPair(ccex::Currency::ANT, ccex::Currency::ETH) => Some(d128::new(1, 8)),
-            ccex::CurrencyPair(ccex::Currency::ANT, ccex::Currency::USDT) => Some(d128::new(1, 8)),
-            ccex::CurrencyPair(ccex::Currency::BAT, ccex::Currency::BTC) => Some(d128::new(1, 8)),
-            ccex::CurrencyPair(ccex::Currency::BAT, ccex::Currency::ETH) => Some(d128::new(1, 8)),
-            ccex::CurrencyPair(ccex::Currency::BAT, ccex::Currency::USDT) => Some(d128::new(1, 8)),
-            ccex::CurrencyPair(ccex::Currency::QRL, ccex::Currency::BTC) => Some(d128::new(1, 8)),
-            ccex::CurrencyPair(ccex::Currency::QRL, ccex::Currency::ETH) => Some(d128::new(1, 8)),
-            ccex::CurrencyPair(ccex::Currency::QRL, ccex::Currency::USDT) => Some(d128::new(1, 8)),
-            ccex::CurrencyPair(ccex::Currency::BNT, ccex::Currency::BTC) => Some(d128::new(1, 8)),
-            ccex::CurrencyPair(ccex::Currency::BNT, ccex::Currency::ETH) => Some(d128::new(1, 8)),
-            ccex::CurrencyPair(ccex::Currency::BNT, ccex::Currency::USDT) => Some(d128::new(1, 8)),
-            ccex::CurrencyPair(ccex::Currency::MGO, ccex::Currency::BTC) => Some(d128::new(1, 8)),
-            ccex::CurrencyPair(ccex::Currency::MGO, ccex::Currency::ETH) => Some(d128::new(1, 8)),
-            ccex::CurrencyPair(ccex::Currency::MGO, ccex::Currency::USDT) => Some(d128::new(1, 8)),
-            ccex::CurrencyPair(ccex::Currency::MYST, ccex::Currency::BTC) => Some(d128::new(1, 8)),
-            ccex::CurrencyPair(ccex::Currency::MYST, ccex::Currency::ETH) => Some(d128::new(1, 8)),
-            ccex::CurrencyPair(ccex::Currency::MYST, ccex::Currency::USDT) => Some(d128::new(1, 8)),
-            ccex::CurrencyPair(ccex::Currency::SNGLS, ccex::Currency::BTC) => Some(d128::new(1, 8)),
-            ccex::CurrencyPair(ccex::Currency::SNGLS, ccex::Currency::ETH) => Some(d128::new(1, 8)),
-            ccex::CurrencyPair(ccex::Currency::SNGLS, ccex::Currency::USDT) => {
-                Some(d128::new(1, 8))
-            }
-            ccex::CurrencyPair(ccex::Currency::PTOY, ccex::Currency::BTC) => Some(d128::new(1, 8)),
-            ccex::CurrencyPair(ccex::Currency::PTOY, ccex::Currency::ETH) => Some(d128::new(1, 8)),
-            ccex::CurrencyPair(ccex::Currency::PTOY, ccex::Currency::USDT) => Some(d128::new(1, 8)),
-            ccex::CurrencyPair(ccex::Currency::CFI, ccex::Currency::BTC) => Some(d128::new(1, 8)),
-            ccex::CurrencyPair(ccex::Currency::CFI, ccex::Currency::ETH) => Some(d128::new(1, 8)),
-            ccex::CurrencyPair(ccex::Currency::CFI, ccex::Currency::USDT) => Some(d128::new(1, 8)),
-            ccex::CurrencyPair(ccex::Currency::SNM, ccex::Currency::BTC) => Some(d128::new(1, 8)),
-            ccex::CurrencyPair(ccex::Currency::SNM, ccex::Currency::ETH) => Some(d128::new(1, 8)),
-            ccex::CurrencyPair(ccex::Currency::SNM, ccex::Currency::USDT) => Some(d128::new(1, 8)),
-            ccex::CurrencyPair(ccex::Currency::SNT, ccex::Currency::BTC) => Some(d128::new(1, 8)),
-            ccex::CurrencyPair(ccex::Currency::SNT, ccex::Currency::ETH) => Some(d128::new(1, 8)),
-            ccex::CurrencyPair(ccex::Currency::SNT, ccex::Currency::USDT) => Some(d128::new(1, 8)),
-            ccex::CurrencyPair(ccex::Currency::MCO, ccex::Currency::BTC) => Some(d128::new(1, 8)),
-            ccex::CurrencyPair(ccex::Currency::MCO, ccex::Currency::ETH) => Some(d128::new(1, 8)),
-            ccex::CurrencyPair(ccex::Currency::MCO, ccex::Currency::USDT) => Some(d128::new(1, 8)),
-            ccex::CurrencyPair(ccex::Currency::STORJ, ccex::Currency::BTC) => Some(d128::new(1, 8)),
-            ccex::CurrencyPair(ccex::Currency::STORJ, ccex::Currency::ETH) => Some(d128::new(1, 8)),
-            ccex::CurrencyPair(ccex::Currency::STORJ, ccex::Currency::USDT) => {
-                Some(d128::new(1, 8))
-            }
-            ccex::CurrencyPair(ccex::Currency::ADX, ccex::Currency::BTC) => Some(d128::new(1, 8)),
-            ccex::CurrencyPair(ccex::Currency::ADX, ccex::Currency::ETH) => Some(d128::new(1, 8)),
-            ccex::CurrencyPair(ccex::Currency::ADX, ccex::Currency::USDT) => Some(d128::new(1, 8)),
-            ccex::CurrencyPair(ccex::Currency::EOS, ccex::Currency::BTC) => Some(d128::new(1, 8)),
-            ccex::CurrencyPair(ccex::Currency::EOS, ccex::Currency::ETH) => Some(d128::new(1, 8)),
-            ccex::CurrencyPair(ccex::Currency::EOS, ccex::Currency::USDT) => Some(d128::new(1, 8)),
-            ccex::CurrencyPair(ccex::Currency::PAY, ccex::Currency::BTC) => Some(d128::new(1, 8)),
-            ccex::CurrencyPair(ccex::Currency::PAY, ccex::Currency::ETH) => Some(d128::new(1, 8)),
-            ccex::CurrencyPair(ccex::Currency::PAY, ccex::Currency::USDT) => Some(d128::new(1, 8)),
-            ccex::CurrencyPair(ccex::Currency::XID, ccex::Currency::BTC) => Some(d128::new(1, 8)),
-            ccex::CurrencyPair(ccex::Currency::XID, ccex::Currency::ETH) => Some(d128::new(1, 8)),
-            ccex::CurrencyPair(ccex::Currency::XID, ccex::Currency::USDT) => Some(d128::new(1, 8)),
-            ccex::CurrencyPair(ccex::Currency::OMG, ccex::Currency::BTC) => Some(d128::new(1, 8)),
-            ccex::CurrencyPair(ccex::Currency::OMG, ccex::Currency::ETH) => Some(d128::new(1, 8)),
-            ccex::CurrencyPair(ccex::Currency::OMG, ccex::Currency::USDT) => Some(d128::new(1, 8)),
-            ccex::CurrencyPair(ccex::Currency::SAN, ccex::Currency::BTC) => Some(d128::new(1, 8)),
-            ccex::CurrencyPair(ccex::Currency::SAN, ccex::Currency::ETH) => Some(d128::new(1, 8)),
-            ccex::CurrencyPair(ccex::Currency::SAN, ccex::Currency::USDT) => Some(d128::new(1, 8)),
-            ccex::CurrencyPair(ccex::Currency::QTUM, ccex::Currency::BTC) => Some(d128::new(1, 8)),
-            ccex::CurrencyPair(ccex::Currency::QTUM, ccex::Currency::ETH) => Some(d128::new(1, 8)),
-            ccex::CurrencyPair(ccex::Currency::QTUM, ccex::Currency::USDT) => Some(d128::new(1, 8)),
-            ccex::CurrencyPair(ccex::Currency::CVC, ccex::Currency::BTC) => Some(d128::new(1, 8)),
-            ccex::CurrencyPair(ccex::Currency::CVC, ccex::Currency::ETH) => Some(d128::new(1, 8)),
-            ccex::CurrencyPair(ccex::Currency::CVC, ccex::Currency::USDT) => Some(d128::new(1, 8)),
-            ccex::CurrencyPair(ccex::Currency::NET, ccex::Currency::BTC) => Some(d128::new(1, 8)),
-            ccex::CurrencyPair(ccex::Currency::NET, ccex::Currency::ETH) => Some(d128::new(1, 8)),
-            ccex::CurrencyPair(ccex::Currency::NET, ccex::Currency::USDT) => Some(d128::new(1, 8)),
-            ccex::CurrencyPair(ccex::Currency::DGD, ccex::Currency::BTC) => Some(d128::new(1, 8)),
-            ccex::CurrencyPair(ccex::Currency::DGD, ccex::Currency::ETH) => Some(d128::new(1, 8)),
-            ccex::CurrencyPair(ccex::Currency::DGD, ccex::Currency::USDT) => Some(d128::new(1, 8)),
-            ccex::CurrencyPair(ccex::Currency::OAX, ccex::Currency::BTC) => Some(d128::new(1, 8)),
-            ccex::CurrencyPair(ccex::Currency::OAX, ccex::Currency::ETH) => Some(d128::new(1, 8)),
-            ccex::CurrencyPair(ccex::Currency::OAX, ccex::Currency::USDT) => Some(d128::new(1, 8)),
-            ccex::CurrencyPair(ccex::Currency::BCH, ccex::Currency::BTC) => Some(d128::new(1, 8)),
-            ccex::CurrencyPair(ccex::Currency::BCH, ccex::Currency::ETH) => Some(d128::new(1, 8)),
-            ccex::CurrencyPair(ccex::Currency::BCH, ccex::Currency::USDT) => Some(d128::new(1, 8)),
-            ccex::CurrencyPair(ccex::Currency::DNT, ccex::Currency::BTC) => Some(d128::new(1, 8)),
-            ccex::CurrencyPair(ccex::Currency::DNT, ccex::Currency::ETH) => Some(d128::new(1, 8)),
-            ccex::CurrencyPair(ccex::Currency::DNT, ccex::Currency::USDT) => Some(d128::new(1, 8)),
-            ccex::CurrencyPair(ccex::Currency::STX, ccex::Currency::BTC) => Some(d128::new(1, 8)),
-            ccex::CurrencyPair(ccex::Currency::STX, ccex::Currency::ETH) => Some(d128::new(1, 8)),
-            ccex::CurrencyPair(ccex::Currency::STX, ccex::Currency::USDT) => Some(d128::new(1, 8)),
-            ccex::CurrencyPair(ccex::Currency::ZRX, ccex::Currency::BTC) => Some(d128::new(1, 8)),
-            ccex::CurrencyPair(ccex::Currency::ZRX, ccex::Currency::ETH) => Some(d128::new(1, 8)),
-            ccex::CurrencyPair(ccex::Currency::ZRX, ccex::Currency::USDT) => Some(d128::new(1, 8)),
-            ccex::CurrencyPair(ccex::Currency::TNT, ccex::Currency::BTC) => Some(d128::new(1, 8)),
-            ccex::CurrencyPair(ccex::Currency::TNT, ccex::Currency::ETH) => Some(d128::new(1, 8)),
-            ccex::CurrencyPair(ccex::Currency::TNT, ccex::Currency::USDT) => Some(d128::new(1, 8)),
-            ccex::CurrencyPair(ccex::Currency::AE, ccex::Currency::BTC) => Some(d128::new(1, 8)),
-            ccex::CurrencyPair(ccex::Currency::AE, ccex::Currency::ETH) => Some(d128::new(1, 8)),
-            ccex::CurrencyPair(ccex::Currency::AE, ccex::Currency::USDT) => Some(d128::new(1, 8)),
-            ccex::CurrencyPair(ccex::Currency::VEN, ccex::Currency::BTC) => Some(d128::new(1, 8)),
-            ccex::CurrencyPair(ccex::Currency::VEN, ccex::Currency::ETH) => Some(d128::new(1, 8)),
-            ccex::CurrencyPair(ccex::Currency::VEN, ccex::Currency::USDT) => Some(d128::new(1, 8)),
-            ccex::CurrencyPair(ccex::Currency::BMC, ccex::Currency::BTC) => Some(d128::new(1, 8)),
-            ccex::CurrencyPair(ccex::Currency::BMC, ccex::Currency::ETH) => Some(d128::new(1, 8)),
-            ccex::CurrencyPair(ccex::Currency::BMC, ccex::Currency::USDT) => Some(d128::new(1, 8)),
-            ccex::CurrencyPair(ccex::Currency::MANA, ccex::Currency::BTC) => Some(d128::new(1, 8)),
-            ccex::CurrencyPair(ccex::Currency::MANA, ccex::Currency::ETH) => Some(d128::new(1, 8)),
-            ccex::CurrencyPair(ccex::Currency::MANA, ccex::Currency::USDT) => Some(d128::new(1, 8)),
-            ccex::CurrencyPair(ccex::Currency::PRO, ccex::Currency::BTC) => Some(d128::new(1, 8)),
-            ccex::CurrencyPair(ccex::Currency::PRO, ccex::Currency::ETH) => Some(d128::new(1, 8)),
-            ccex::CurrencyPair(ccex::Currency::PRO, ccex::Currency::USDT) => Some(d128::new(1, 8)),
-            ccex::CurrencyPair(ccex::Currency::KNC, ccex::Currency::BTC) => Some(d128::new(1, 8)),
-            ccex::CurrencyPair(ccex::Currency::KNC, ccex::Currency::ETH) => Some(d128::new(1, 8)),
-            ccex::CurrencyPair(ccex::Currency::KNC, ccex::Currency::USDT) => Some(d128::new(1, 8)),
-            ccex::CurrencyPair(ccex::Currency::SALT, ccex::Currency::BTC) => Some(d128::new(1, 8)),
-            ccex::CurrencyPair(ccex::Currency::SALT, ccex::Currency::ETH) => Some(d128::new(1, 8)),
-            ccex::CurrencyPair(ccex::Currency::SALT, ccex::Currency::USDT) => Some(d128::new(1, 8)),
-            ccex::CurrencyPair(ccex::Currency::IND, ccex::Currency::BTC) => Some(d128::new(1, 8)),
-            ccex::CurrencyPair(ccex::Currency::IND, ccex::Currency::ETH) => Some(d128::new(1, 8)),
-            ccex::CurrencyPair(ccex::Currency::IND, ccex::Currency::USDT) => Some(d128::new(1, 8)),
-            ccex::CurrencyPair(ccex::Currency::TRX, ccex::Currency::BTC) => Some(d128::new(1, 8)),
-            ccex::CurrencyPair(ccex::Currency::TRX, ccex::Currency::ETH) => Some(d128::new(1, 8)),
-            ccex::CurrencyPair(ccex::Currency::TRX, ccex::Currency::USDT) => Some(d128::new(1, 8)),
-            ccex::CurrencyPair(ccex::Currency::ENG, ccex::Currency::BTC) => Some(d128::new(1, 8)),
-            ccex::CurrencyPair(ccex::Currency::ENG, ccex::Currency::ETH) => Some(d128::new(1, 8)),
-            ccex::CurrencyPair(ccex::Currency::ENG, ccex::Currency::USDT) => Some(d128::new(1, 8)),
-            ccex::CurrencyPair(ccex::Currency::AST, ccex::Currency::BTC) => Some(d128::new(1, 8)),
-            ccex::CurrencyPair(ccex::Currency::AST, ccex::Currency::ETH) => Some(d128::new(1, 8)),
-            ccex::CurrencyPair(ccex::Currency::AST, ccex::Currency::USDT) => Some(d128::new(1, 8)),
-            ccex::CurrencyPair(ccex::Currency::REQ, ccex::Currency::BTC) => Some(d128::new(1, 8)),
-            ccex::CurrencyPair(ccex::Currency::REQ, ccex::Currency::ETH) => Some(d128::new(1, 8)),
-            ccex::CurrencyPair(ccex::Currency::REQ, ccex::Currency::USDT) => Some(d128::new(1, 8)),
-            ccex::CurrencyPair(ccex::Currency::NEU, ccex::Currency::BTC) => Some(d128::new(1, 8)),
-            ccex::CurrencyPair(ccex::Currency::NEU, ccex::Currency::ETH) => Some(d128::new(1, 8)),
-            ccex::CurrencyPair(ccex::Currency::NEU, ccex::Currency::USDT) => Some(d128::new(1, 8)),
-            ccex::CurrencyPair(ccex::Currency::SRN, ccex::Currency::BTC) => Some(d128::new(1, 8)),
-            ccex::CurrencyPair(ccex::Currency::SRN, ccex::Currency::ETH) => Some(d128::new(1, 8)),
-            ccex::CurrencyPair(ccex::Currency::SRN, ccex::Currency::USDT) => Some(d128::new(1, 8)),
-            ccex::CurrencyPair(ccex::Currency::INS, ccex::Currency::BTC) => Some(d128::new(1, 8)),
-            ccex::CurrencyPair(ccex::Currency::INS, ccex::Currency::ETH) => Some(d128::new(1, 8)),
-            ccex::CurrencyPair(ccex::Currency::INS, ccex::Currency::USDT) => Some(d128::new(1, 8)),
-            ccex::CurrencyPair(ccex::Currency::AION, ccex::Currency::BTC) => Some(d128::new(1, 8)),
-            ccex::CurrencyPair(ccex::Currency::AION, ccex::Currency::ETH) => Some(d128::new(1, 8)),
-            ccex::CurrencyPair(ccex::Currency::AION, ccex::Currency::USDT) => Some(d128::new(1, 8)),
+
+            CurrencyPair(BTC, USDT) => Some(d128::new(1, 5)),
+
+            CurrencyPair(REP, ETH)
+            | CurrencyPair(EDG, ETH)
+            | CurrencyPair(REP, USDT)
+            | CurrencyPair(EDG, USDT) => Some(d128::new(1, 7)),
+
+            CurrencyPair(ADX, BTC)
+            | CurrencyPair(ADX, ETH)
+            | CurrencyPair(ADX, USDT)
+            | CurrencyPair(AE, BTC)
+            | CurrencyPair(AE, ETH)
+            | CurrencyPair(AE, USDT)
+            | CurrencyPair(AION, BTC)
+            | CurrencyPair(AION, ETH)
+            | CurrencyPair(AION, USDT)
+            | CurrencyPair(ANS, BTC)
+            | CurrencyPair(ANT, BTC)
+            | CurrencyPair(ANT, ETH)
+            | CurrencyPair(ANT, USDT)
+            | CurrencyPair(AST, BTC)
+            | CurrencyPair(AST, ETH)
+            | CurrencyPair(AST, USDT)
+            | CurrencyPair(BAT, BTC)
+            | CurrencyPair(BAT, ETH)
+            | CurrencyPair(BAT, USDT)
+            | CurrencyPair(BCAP, BTC)
+            | CurrencyPair(BCAP, ETH)
+            | CurrencyPair(BCAP, USDT)
+            | CurrencyPair(BCH, BTC)
+            | CurrencyPair(BCH, ETH)
+            | CurrencyPair(BCH, USDT)
+            | CurrencyPair(BMC, BTC)
+            | CurrencyPair(BMC, ETH)
+            | CurrencyPair(BMC, USDT)
+            | CurrencyPair(BNT, BTC)
+            | CurrencyPair(BNT, ETH)
+            | CurrencyPair(BNT, USDT)
+            | CurrencyPair(CFI, BTC)
+            | CurrencyPair(CFI, ETH)
+            | CurrencyPair(CFI, USDT)
+            | CurrencyPair(CVC, BTC)
+            | CurrencyPair(CVC, ETH)
+            | CurrencyPair(CVC, USDT)
+            | CurrencyPair(DASH, BTC)
+            | CurrencyPair(DASH, ETH)
+            | CurrencyPair(DCT, BTC)
+            | CurrencyPair(DGD, BTC)
+            | CurrencyPair(DGD, ETH)
+            | CurrencyPair(DGD, USDT)
+            | CurrencyPair(DNT, BTC)
+            | CurrencyPair(DNT, ETH)
+            | CurrencyPair(DNT, USDT)
+            | CurrencyPair(EDG, BTC)
+            | CurrencyPair(ENG, BTC)
+            | CurrencyPair(ENG, ETH)
+            | CurrencyPair(ENG, USDT)
+            | CurrencyPair(EOS, BTC)
+            | CurrencyPair(EOS, ETH)
+            | CurrencyPair(EOS, USDT)
+            | CurrencyPair(ETH, BTC)
+            | CurrencyPair(GNO, BTC)
+            | CurrencyPair(GNO, ETH)
+            | CurrencyPair(GNO, USDT)
+            | CurrencyPair(GNT, BTC)
+            | CurrencyPair(GNT, ETH)
+            | CurrencyPair(GUP, BTC)
+            | CurrencyPair(GUP, ETH)
+            | CurrencyPair(GUP, USDT)
+            | CurrencyPair(HMQ, BTC)
+            | CurrencyPair(HMQ, ETH)
+            | CurrencyPair(HMQ, USDT)
+            | CurrencyPair(ICN, BTC)
+            | CurrencyPair(ICN, ETH)
+            | CurrencyPair(INCNT, ETH)
+            | CurrencyPair(INCNT, USDT)
+            | CurrencyPair(IND, BTC)
+            | CurrencyPair(IND, ETH)
+            | CurrencyPair(IND, USDT)
+            | CurrencyPair(INS, BTC)
+            | CurrencyPair(INS, ETH)
+            | CurrencyPair(INS, USDT)
+            | CurrencyPair(KNC, BTC)
+            | CurrencyPair(KNC, ETH)
+            | CurrencyPair(KNC, USDT)
+            | CurrencyPair(LTC, BTC)
+            | CurrencyPair(LTC, ETH)
+            | CurrencyPair(LUN, BTC)
+            | CurrencyPair(LUN, ETH)
+            | CurrencyPair(LUN, USDT)
+            | CurrencyPair(MANA, BTC)
+            | CurrencyPair(MANA, ETH)
+            | CurrencyPair(MANA, USDT)
+            | CurrencyPair(MCO, BTC)
+            | CurrencyPair(MCO, ETH)
+            | CurrencyPair(MCO, USDT)
+            | CurrencyPair(MGO, BTC)
+            | CurrencyPair(MGO, ETH)
+            | CurrencyPair(MGO, USDT)
+            | CurrencyPair(MLN, BTC)
+            | CurrencyPair(MLN, ETH)
+            | CurrencyPair(MLN, USDT)
+            | CurrencyPair(MYST, BTC)
+            | CurrencyPair(MYST, ETH)
+            | CurrencyPair(MYST, USDT)
+            | CurrencyPair(NET, BTC)
+            | CurrencyPair(NET, ETH)
+            | CurrencyPair(NET, USDT)
+            | CurrencyPair(NEU, BTC)
+            | CurrencyPair(NEU, ETH)
+            | CurrencyPair(NEU, USDT)
+            | CurrencyPair(OAX, BTC)
+            | CurrencyPair(OAX, ETH)
+            | CurrencyPair(OAX, USDT)
+            | CurrencyPair(OMG, BTC)
+            | CurrencyPair(OMG, ETH)
+            | CurrencyPair(OMG, USDT)
+            | CurrencyPair(PAY, BTC)
+            | CurrencyPair(PAY, ETH)
+            | CurrencyPair(PAY, USDT)
+            | CurrencyPair(PLU, BTC)
+            | CurrencyPair(PLU, ETH)
+            | CurrencyPair(PLU, USDT)
+            | CurrencyPair(PRO, BTC)
+            | CurrencyPair(PRO, ETH)
+            | CurrencyPair(PRO, USDT)
+            | CurrencyPair(PTOY, BTC)
+            | CurrencyPair(PTOY, ETH)
+            | CurrencyPair(PTOY, USDT)
+            | CurrencyPair(QRL, BTC)
+            | CurrencyPair(QRL, ETH)
+            | CurrencyPair(QRL, USDT)
+            | CurrencyPair(QTUM, BTC)
+            | CurrencyPair(QTUM, ETH)
+            | CurrencyPair(QTUM, USDT)
+            | CurrencyPair(REP, BTC)
+            | CurrencyPair(REQ, BTC)
+            | CurrencyPair(REQ, ETH)
+            | CurrencyPair(REQ, USDT)
+            | CurrencyPair(RLC, BTC)
+            | CurrencyPair(RLC, ETH)
+            | CurrencyPair(RLC, USDT)
+            | CurrencyPair(ROUND, BTC)
+            | CurrencyPair(ROUND, ETH)
+            | CurrencyPair(SALT, BTC)
+            | CurrencyPair(SALT, ETH)
+            | CurrencyPair(SALT, USDT)
+            | CurrencyPair(SAN, BTC)
+            | CurrencyPair(SAN, ETH)
+            | CurrencyPair(SAN, USDT)
+            | CurrencyPair(SNGLS, BTC)
+            | CurrencyPair(SNGLS, ETH)
+            | CurrencyPair(SNGLS, USDT)
+            | CurrencyPair(SNM, BTC)
+            | CurrencyPair(SNM, ETH)
+            | CurrencyPair(SNM, USDT)
+            | CurrencyPair(SNT, BTC)
+            | CurrencyPair(SNT, ETH)
+            | CurrencyPair(SNT, USDT)
+            | CurrencyPair(SRN, BTC)
+            | CurrencyPair(SRN, ETH)
+            | CurrencyPair(SRN, USDT)
+            | CurrencyPair(STORJ, BTC)
+            | CurrencyPair(STORJ, ETH)
+            | CurrencyPair(STORJ, USDT)
+            | CurrencyPair(STX, BTC)
+            | CurrencyPair(STX, ETH)
+            | CurrencyPair(STX, USDT)
+            | CurrencyPair(TAAS, BTC)
+            | CurrencyPair(TAAS, ETH)
+            | CurrencyPair(TAAS, USDT)
+            | CurrencyPair(TIME, BTC)
+            | CurrencyPair(TIME, ETH)
+            | CurrencyPair(TIME, USDT)
+            | CurrencyPair(TKN, BTC)
+            | CurrencyPair(TKN, ETH)
+            | CurrencyPair(TKN, USDT)
+            | CurrencyPair(TNT, BTC)
+            | CurrencyPair(TNT, ETH)
+            | CurrencyPair(TNT, USDT)
+            | CurrencyPair(TRST, BTC)
+            | CurrencyPair(TRST, ETH)
+            | CurrencyPair(TRST, USDT)
+            | CurrencyPair(TRX, BTC)
+            | CurrencyPair(TRX, ETH)
+            | CurrencyPair(TRX, USDT)
+            | CurrencyPair(VEN, BTC)
+            | CurrencyPair(VEN, ETH)
+            | CurrencyPair(VEN, USDT)
+            | CurrencyPair(VSL, BTC)
+            | CurrencyPair(VSL, ETH)
+            | CurrencyPair(WAVES, BTC)
+            | CurrencyPair(WAVES, ETH)
+            | CurrencyPair(WINGS, BTC)
+            | CurrencyPair(WINGS, ETH)
+            | CurrencyPair(WINGS, USDT)
+            | CurrencyPair(XID, BTC)
+            | CurrencyPair(XID, ETH)
+            | CurrencyPair(XID, USDT)
+            | CurrencyPair(XZC, BTC)
+            | CurrencyPair(ZRX, BTC)
+            | CurrencyPair(ZRX, ETH)
+            | CurrencyPair(ZRX, USDT) => Some(d128::new(1, 8)),
             _ => None,
         }
     }

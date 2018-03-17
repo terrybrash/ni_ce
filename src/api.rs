@@ -5,7 +5,7 @@ use base64;
 use std::fmt::{self, Display, Formatter};
 use serde::ser::Serialize;
 use status::StatusCode;
-use std::collections::{HashMap};
+use std::collections::HashMap;
 
 use reqwest;
 use tungstenite;
@@ -60,18 +60,18 @@ pub enum Payload {
 
 impl Payload {
     pub fn as_bytes(&self) -> &[u8] {
-        match self {
-            &Payload::Text(ref payload) => payload.as_bytes(),
-            &Payload::Binary(ref payload) => payload.as_slice(),
+        match *self {
+            Payload::Text(ref payload) => payload.as_bytes(),
+            Payload::Binary(ref payload) => payload.as_slice(),
         }
     }
 }
 
 impl Display for Payload {
     fn fmt(&self, f: &mut Formatter) -> Result<(), fmt::Error> {
-        match self {
-            &Payload::Text(ref body) => write!(f, "{}", body),
-            &Payload::Binary(ref body) => write!(f, "(binary) {}", base64::encode(body)),
+        match *self {
+            Payload::Text(ref body) => write!(f, "{}", body),
+            Payload::Binary(ref body) => write!(f, "(binary) {}", base64::encode(body)),
         }
     }
 }
@@ -100,8 +100,9 @@ impl Query {
         if self.params.is_empty() {
             String::new()
         } else {
-            let query = self.params.iter()
-                .map(|(ref name, ref value)| [name.as_str(), &"=", value.as_str()])
+            let query = self.params
+                .iter()
+                .map(|(name, value)| [name.as_str(), "=", value.as_str()])
                 .collect::<Vec<[&str; 3]>>()
                 .join(&"&");
             format!("?{}", query.into_iter().collect::<String>())
@@ -116,7 +117,7 @@ where
 {
     fn authenticate(self, credential: C) -> PrivateRequest<Self, C> {
         PrivateRequest {
-            credential: credential,
+            credential,
             request: self,
         }
     }
@@ -244,12 +245,13 @@ impl From<reqwest::Response> for HttpResponse {
         let mut body = Vec::with_capacity(1024);
         response.read_to_end(&mut body).unwrap();
 
-        let body = match body.is_empty() {
-            true => None,
-            false => match String::from_utf8(body) {
+        let body = if body.is_empty() {
+            None
+        } else {
+            match String::from_utf8(body) {
                 Ok(body) => Some(Payload::Text(body)),
                 Err(body) => Some(Payload::Binary(body.into_bytes())),
-            },
+            }
         };
 
         let headers = response
@@ -260,8 +262,8 @@ impl From<reqwest::Response> for HttpResponse {
 
         HttpResponse {
             status: StatusCode::try_from(response.status().as_u16()).unwrap(),
-            headers: headers,
-            body: body,
+            headers,
+            body,
         }
     }
 }
@@ -295,7 +297,7 @@ pub struct HttpRequest<'a> {
 impl<'a> HttpRequest<'a> {
     pub fn url(&self) -> Result<Url, url::ParseError> {
         match self.query {
-            Some(ref query) => Url::parse(self.host)?
+            Some(query) => Url::parse(self.host)?
                 .join(self.path)?
                 .join(query.to_string().as_str()),
             None => Url::parse(self.host)?.join(self.path),
@@ -307,14 +309,14 @@ impl<'a> Display for HttpRequest<'a> {
     fn fmt(&self, f: &mut Formatter) -> Result<(), fmt::Error> {
         writeln!(f, "{} {:?}", self.method, self.url())?;
 
+        if let Some(query) = self.query {
+            writeln!(f, "Query: {}", query.to_string())?;
+        }
+
         if let Some(ref headers) = self.headers {
             for header in headers {
                 writeln!(f, "{}", header)?;
             }
-        }
-
-        if let Some(ref query) = self.query {
-            writeln!(f, "Query: {}", query.to_string())?;
         }
 
         if let Some(ref body) = self.body {
@@ -396,8 +398,10 @@ where
         let tungstenite_request = Request::from(url);
         // for header in request.headers() {
         //     match header.value {
-        //         HeaderValue::String(value) => tungstenite_request.add_header(Cow::from(header.name), Cow::from(value)),
-        //         HeaderValue::Bytes(value) => tungstenite_request.add_header(Cow::from(header.name), Cow::from(value)),
+        //         HeaderValue::String(value) =>
+        //         tungstenite_request.add_header(Cow::from(header.name), Cow::from(value)),
+        //         HeaderValue::Bytes(value) =>
+        //         tungstenite_request.add_header(Cow::from(header.name), Cow::from(value)),
         //     }
         // }
 
@@ -410,7 +414,7 @@ where
         }
 
         Ok(TungsteniteClient {
-            client: client,
+            client,
             _resource: ::std::marker::PhantomData::default(),
         })
     }

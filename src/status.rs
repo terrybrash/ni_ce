@@ -14,7 +14,7 @@ use std::cmp::Ordering;
 /// Registry](http://www.iana.org/assignments/http-status-codes/http-status-codes.xhtml) which is
 /// the source for this enum (with one exception, 418 I'm a teapot, which is
 /// inexplicably not in the register).
-#[derive(Debug, Hash)]
+#[derive(Eq, Clone, Debug, Hash)]
 pub enum StatusCode {
     /// 100 Continue
     /// [[RFC7231, Section 6.2.1](https://tools.ietf.org/html/rfc7231#section-6.2.1)]
@@ -553,15 +553,6 @@ impl PartialEq for StatusCode {
     #[inline]
     fn eq(&self, other: &StatusCode) -> bool {
         self.as_u16() == other.as_u16()
-    }
-}
-
-impl Eq for StatusCode {}
-
-impl Clone for StatusCode {
-    #[inline]
-    fn clone(&self) -> StatusCode {
-        *self
     }
 }
 

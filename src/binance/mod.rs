@@ -1,18 +1,18 @@
-use api::{Payload, Query, HttpRequest, HttpResponse, HttpClient, Headers, Header, Method};
-use chrono::{Utc, DateTime};
+use api::{Header, Headers, HttpClient, HttpRequest, HttpResponse, Method, Payload, Query};
+use chrono::Utc;
 use crate as ccex;
-use failure::{Error};
+use failure::Error;
 use hex;
 use serde_json;
 use hmac::{Hmac, Mac};
 use rust_decimal::Decimal as d128;
 use serde::de::DeserializeOwned;
 use sha2::Sha256;
-use std::cell::{RefCell};
-use std::collections::{HashMap};
+use std::cell::RefCell;
+use std::collections::HashMap;
 use std::convert::{TryFrom, TryInto};
 use url::Url;
-use {Exchange};
+use Exchange;
 
 pub struct Binance<Client: HttpClient> {
     pub host: Url,
@@ -33,7 +33,10 @@ impl<Client: HttpClient> Binance<Client> {
         let query = {
             let mut query = Query::with_capacity(3);
             query.insert_param("timestamp", Self::timestamp_now().to_string());
-            let signature = Self::private_signature(&self.credential, query.to_string().trim_left_matches("?"))?;
+            let signature = Self::private_signature(
+                &self.credential,
+                query.to_string().trim_left_matches('?'),
+            )?;
             query.insert_param("signature", signature);
             query.to_string()
         };
@@ -63,28 +66,26 @@ impl<Client: HttpClient> Binance<Client> {
 
     fn private_signature(credential: &ccex::Credential, query: &str) -> Result<String, Error> {
         println!("{}", query);
-        let mut mac = Hmac::<Sha256>::new(credential.secret.as_bytes())
-            .map_err(|e| format_err!("{:?}", e))?;
+        let mut mac =
+            Hmac::<Sha256>::new(credential.secret.as_bytes()).map_err(|e| format_err!("{:?}", e))?;
         mac.input(query.as_bytes());
         Ok(hex::encode(mac.result().code().to_vec()))
     }
 
     fn private_headers(credential: &ccex::Credential) -> Headers {
-        vec![
-            Header::new("X-MBX-APIKEY", credential.key.clone()),
-        ]
+        vec![Header::new("X-MBX-APIKEY", credential.key.clone())]
     }
 
-    fn deserialize_private_response<T>(response: &HttpResponse) -> Result<T, Error> 
+    fn deserialize_private_response<T>(response: &HttpResponse) -> Result<T, Error>
     where
-        T: DeserializeOwned
+        T: DeserializeOwned,
     {
         Self::deserialize_public_response(response)
     }
 
     fn deserialize_public_response<T>(response: &HttpResponse) -> Result<T, Error>
     where
-        T: DeserializeOwned
+        T: DeserializeOwned,
     {
         let body = match response.body {
             Some(Payload::Text(ref body)) => body,
@@ -125,12 +126,12 @@ impl<Client: HttpClient> Exchange for Binance<Client> {
     }
 
     fn get_orderbooks(
-        &self, 
+        &self,
         products: &[ccex::CurrencyPair],
     ) -> Result<HashMap<ccex::CurrencyPair, ccex::Orderbook>, Error> {
         // Binance doesn't support requests for multiple orderbooks in a single call so they have
         // to be done in separate requests.
-        
+
         let mut orderbooks = HashMap::with_capacity(products.len());
         for &product in products.iter() {
             let query = {
@@ -154,15 +155,19 @@ impl<Client: HttpClient> Exchange for Binance<Client> {
             #[derive(Deserialize)]
             #[serde(rename_all = "camelCase")]
             struct Orderbook {
-                last_update_id: u64,
+                // last_update_id: u64,
                 bids: Vec<(d128, d128, ())>,
                 asks: Vec<(d128, d128, ())>,
             }
             let orderbook: Orderbook = Self::deserialize_public_response(&http_response)?;
-            let asks = orderbook.asks.into_iter()
+            let asks = orderbook
+                .asks
+                .into_iter()
                 .map(|(price, quantity, _)| ccex::Offer::new(price, quantity))
                 .collect();
-            let bids = orderbook.bids.into_iter()
+            let bids = orderbook
+                .bids
+                .into_iter()
                 .map(|(price, quantity, _)| ccex::Offer::new(price, quantity))
                 .collect();
             let orderbook = ccex::Orderbook::new(asks, bids);
@@ -171,24 +176,23 @@ impl<Client: HttpClient> Exchange for Binance<Client> {
         Ok(orderbooks)
     }
 
-    fn place_order(&self, order: ccex::NewOrder) -> Result<ccex::Order, Error> {
+    fn place_order(&self, _order: ccex::NewOrder) -> Result<ccex::Order, Error> {
         unimplemented!()
     }
 
     fn get_balances(&self) -> Result<HashMap<ccex::Currency, d128>, Error> {
         let account = self.get_account()?;
 
-        account.balances.into_iter()
-            .filter_map(|balance| {
-                match ccex::Currency::try_from(balance.asset) {
-                    Ok(currency) => Some(Ok((currency, balance.free))),
-                    Err(_) => None,
-                }
+        account
+            .balances
+            .into_iter()
+            .filter_map(|balance| match ccex::Currency::try_from(balance.asset) {
+                Ok(currency) => Some(Ok((currency, balance.free))),
+                Err(_) => None,
             })
             .collect()
     }
 }
-
 
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -259,9 +263,15 @@ impl TryFrom<CurrencyPair> for ccex::CurrencyPair {
         // But they use a separator in currency pairs on their exchange????????
         // These people are fucking braindead holy shit.
         match currency_pair.to_uppercase().as_str() {
-            "BTCUSDT" => Ok(ccex::CurrencyPair(ccex::Currency::BTC, ccex::Currency::USDT)),
+            "BTCUSDT" => Ok(ccex::CurrencyPair(
+                ccex::Currency::BTC,
+                ccex::Currency::USDT,
+            )),
             "ETHBTC" => Ok(ccex::CurrencyPair(ccex::Currency::ETH, ccex::Currency::BTC)),
-            "ETHUSDT" => Ok(ccex::CurrencyPair(ccex::Currency::ETH, ccex::Currency::USDT)),
+            "ETHUSDT" => Ok(ccex::CurrencyPair(
+                ccex::Currency::ETH,
+                ccex::Currency::USDT,
+            )),
             currency_pair => Err(format_err!("{} isn't supported", currency_pair)),
         }
     }

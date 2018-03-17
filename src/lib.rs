@@ -3,7 +3,7 @@
 #![feature(crate_in_paths)]
 #![feature(test)]
 #![feature(try_from)]
-#![allow(warnings)]
+// #![allow(warnings)]
 
 extern crate base64;
 extern crate chrono;
@@ -39,7 +39,6 @@ pub use model::*;
 
 use failure::Error;
 use rust_decimal::Decimal as d128;
-use std::sync::mpsc;
 use std::collections::HashMap;
 use crate as ccex;
 

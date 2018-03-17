@@ -85,7 +85,7 @@ pub struct FutureLock<T> {
 impl<T> FutureLock<T> {
     fn new(value: Arc<(Mutex<Option<FutureStatus<T>>>, Condvar)>) -> Self {
         FutureLock {
-            value: value,
+            value,
             has_responded: false,
         }
     }

@@ -1,7 +1,7 @@
 use api::{Header, Headers, HttpClient, HttpRequest, HttpResponse, Method, Payload, Query};
 use chrono::Utc;
 use crate as ccex;
-use failure::{Error, ResultExt};
+use failure::{err_msg, Error, ResultExt};
 use hex;
 use hmac::{Hmac, Mac};
 use rust_decimal::Decimal as d128;
@@ -91,7 +91,7 @@ impl FromStr for Currency {
     type Err = ParseCurrencyError;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
-        const CURRENCIES: [(&'static str, Currency); 18] = [
+        const CURRENCIES: [(&str, Currency); 18] = [
             ("BCH", Currency::BCH),
             ("BTC", Currency::BTC),
             ("DASH", Currency::DASH),
@@ -112,7 +112,7 @@ impl FromStr for Currency {
             ("ZEC", Currency::ZEC),
         ];
 
-        for &(string, currency) in CURRENCIES.iter() {
+        for &(string, currency) in &CURRENCIES {
             if string.eq_ignore_ascii_case(s) {
                 return Ok(currency);
             }
@@ -267,7 +267,7 @@ impl<Client: HttpClient> Exmo<Client> {
         // elapsed since epoch has the limitations of 1) only allowing one request
         // per millisecond and 2) expiring after ~50 days
         let now = Utc::now();
-        (now.timestamp() as u32 - 1518363415u32) * 1000 + now.timestamp_subsec_millis()
+        (now.timestamp() as u32 - 1_518_363_415u32) * 1000 + now.timestamp_subsec_millis()
     }
 
     fn get_user_info(&self, nonce: u32) -> Result<UserInfo, Error> {
@@ -276,7 +276,7 @@ impl<Client: HttpClient> Exmo<Client> {
             query.insert_param("nonce", nonce.to_string());
             query.to_string()
         };
-        let body = query.as_str().trim_left_matches("?").to_owned();
+        let body = query.as_str().trim_left_matches('?').to_owned();
         let headers = Self::private_headers(&self.credential, &body)?;
         let http_request = HttpRequest {
             method: Method::Post,
@@ -314,10 +314,10 @@ impl<Client: HttpClient> Exmo<Client> {
     {
         let body = match response.body {
             Some(Payload::Text(ref body)) => body,
-            Some(Payload::Binary(_)) => Err(format_err!(
-                "http response contained binary, expected text."
-            ))?,
-            None => Err(format_err!("the body is empty"))?,
+            Some(Payload::Binary(_)) => {
+                Err(err_msg("http response contained binary, expected text."))?
+            }
+            None => Err(err_msg("the body is empty"))?,
         };
         let response: serde_json::Value = serde_json::from_str(body)?;
 
@@ -359,7 +359,9 @@ impl<Client: HttpClient> Exchange for Exmo<Client> {
     fn get_balances(&self) -> Result<HashMap<ccex::Currency, d128>, Error> {
         let user_info = self.get_user_info(Self::nonce())?;
 
-        user_info.balances.into_iter()
+        user_info
+            .balances
+            .into_iter()
             .filter_map(|(currency, balance)| {
                 match currency.parse::<Currency>() {
                     Ok(currency) => {
@@ -446,7 +448,7 @@ impl<Client: HttpClient> Exchange for Exmo<Client> {
             query.insert_param("type", exmo_instruction.to_string());
             query.to_string()
         };
-        let body = query.trim_left_matches("?").to_owned();
+        let body = query.trim_left_matches('?').to_owned();
         let headers = Self::private_headers(&self.credential, &body)?;
         let http_request = HttpRequest {
             method: Method::Post,
@@ -484,6 +486,7 @@ impl<Client: HttpClient> Exchange for Exmo<Client> {
     }
 
     fn min_quantity(&self, product: ccex::CurrencyPair) -> Option<d128> {
+        #[allow(match_same_arms)]
         match product {
             ccex::CurrencyPair(ccex::Currency::BTC, ccex::Currency::USD) => Some(d128::new(1, 3)),
             ccex::CurrencyPair(ccex::Currency::BTC, ccex::Currency::EUR) => Some(d128::new(1, 3)),

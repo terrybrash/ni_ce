@@ -6,7 +6,6 @@ use std::iter::FromIterator;
 use std::ops::{Deref, DerefMut};
 use std::str::FromStr;
 use uuid::Uuid;
-use std::time::Instant;
 
 pub type ID = i64;
 
@@ -144,7 +143,7 @@ pub struct ParseCurrencyError(String);
 impl FromStr for Currency {
     type Err = ParseCurrencyError;
     fn from_str(s: &str) -> Result<Self, Self::Err> {
-        const CURRENCIES: [(&'static str, Currency); 92] = [
+        const CURRENCIES: [(&str, Currency); 92] = [
             ("ADX", Currency::ADX),
             ("AE", Currency::AE),
             ("AION", Currency::AION),
@@ -400,10 +399,10 @@ impl From<NewOrderInstruction> for OrderInstruction {
                 quantity,
                 time_in_force,
             } => OrderInstruction::Limit {
-                price: price,
+                price,
                 original_quantity: quantity,
                 remaining_quantity: quantity,
-                time_in_force: time_in_force,
+                time_in_force,
             },
         }
     }
@@ -429,10 +428,7 @@ pub struct Offer {
 
 impl Offer {
     pub fn new(price: d128, quantity: d128) -> Self {
-        Offer {
-            price, 
-            quantity,
-        }
+        Offer { price, quantity }
     }
 
     pub fn total(&self) -> d128 {
@@ -571,10 +567,7 @@ impl Default for Orderbook {
 
 impl Orderbook {
     pub fn new(asks: Asks, bids: Bids) -> Self {
-        Orderbook { 
-            asks, 
-            bids,
-        }
+        Orderbook { asks, bids }
     }
 
     pub fn remove(&mut self, side: Side, offer: &Offer) -> Option<Offer> {
@@ -624,93 +617,93 @@ pub struct Market {
 impl Market {
     pub fn new(product: &CurrencyPair) -> Self {
         Market {
-            product: product.clone(),
+            product: *product,
             orderbook: Orderbook::default(),
             trades: Vec::with_capacity(256),
         }
     }
 }
 
-#[derive(Debug, Clone)]
-pub struct Exchange {
-    pub id: ID,
-    pub name: String,
-    pub markets: Vec<Market>,
-    pub orders: Vec<Order>,
-}
+// #[derive(Debug, Clone)]
+// pub struct Exchange {
+//     pub id: ID,
+//     pub name: String,
+//     pub markets: Vec<Market>,
+//     pub orders: Vec<Order>,
+// }
 
-impl Exchange {
-    pub fn new(id: ID, name: String) -> Self {
-        Exchange {
-            id: id,
-            name: name,
-            markets: Vec::with_capacity(16),
-            orders: Vec::with_capacity(32),
-        }
-    }
-
-    pub fn add_market(&mut self, product: &CurrencyPair) {
-        if self.markets.iter().any(|market| &market.product == product) {
-            panic!("Market already exists");
-        } else {
-            self.markets.push(Market::new(product));
-        }
-    }
-
-    pub fn market(&self, product: &CurrencyPair) -> Option<&Market> {
-        self.markets
-            .iter()
-            .find(|market| &market.product == product)
-    }
-
-    pub fn market_mut(&mut self, product: &CurrencyPair) -> Option<&mut Market> {
-        self.markets
-            .iter_mut()
-            .find(|market| &market.product == product)
-    }
-
-    pub fn apply(&mut self, event: ExchangeEvent) {
-        match event {
-            ExchangeEvent::Heartbeat => {}
-            ExchangeEvent::OrderbookOfferUpdated(product, side, offer) => {
-                self.market_mut(&product)
-                    .unwrap()
-                    .orderbook
-                    .add_or_update(side, offer);
-            }
-            ExchangeEvent::OrderbookOfferRemoved(product, side, offer) => {
-                self.market_mut(&product)
-                    .unwrap()
-                    .orderbook
-                    .remove(side, &offer);
-            }
-            ExchangeEvent::MarketAdded(product) => self.add_market(&product),
-            ExchangeEvent::TradeExecuted(product, trade) => {
-                self.market_mut(&product).unwrap().trades.push(trade)
-            }
-            ExchangeEvent::OrderAdded(order) => self.orders.push(order),
-            ExchangeEvent::OrderOpened(order) => self.orders.push(order),
-            ExchangeEvent::OrderFilled(order) => {
-                match self.orders.iter().position(|o| o.id == order.id) {
-                    Some(o) => self.orders[o] = order,
-                    None => panic!(),
-                }
-            }
-            ExchangeEvent::OrderClosed(order) => {
-                match self.orders.iter().position(|o| o.id == order.id) {
-                    Some(o) => {
-                        self.orders.remove(o);
-                    }
-                    None => panic!(),
-                }
-            }
-            ExchangeEvent::Batch(events) => for event in events {
-                self.apply(event)
-            },
-            ExchangeEvent::Unimplemented(_event) => {}
-        }
-    }
-}
+// impl Exchange {
+//     pub fn new(id: ID, name: String) -> Self {
+//         Exchange {
+//             id: id,
+//             name: name,
+//             markets: Vec::with_capacity(16),
+//             orders: Vec::with_capacity(32),
+//         }
+//     }
+//
+//     pub fn add_market(&mut self, product: &CurrencyPair) {
+//         if self.markets.iter().any(|market| &market.product == product) {
+//             panic!("Market already exists");
+//         } else {
+//             self.markets.push(Market::new(product));
+//         }
+//     }
+//
+//     pub fn market(&self, product: &CurrencyPair) -> Option<&Market> {
+//         self.markets
+//             .iter()
+//             .find(|market| &market.product == product)
+//     }
+//
+//     pub fn market_mut(&mut self, product: &CurrencyPair) -> Option<&mut Market> {
+//         self.markets
+//             .iter_mut()
+//             .find(|market| &market.product == product)
+//     }
+//
+//     pub fn apply(&mut self, event: ExchangeEvent) {
+//         match event {
+//             ExchangeEvent::Heartbeat => {}
+//             ExchangeEvent::OrderbookOfferUpdated(product, side, offer) => {
+//                 self.market_mut(&product)
+//                     .unwrap()
+//                     .orderbook
+//                     .add_or_update(side, offer);
+//             }
+//             ExchangeEvent::OrderbookOfferRemoved(product, side, offer) => {
+//                 self.market_mut(&product)
+//                     .unwrap()
+//                     .orderbook
+//                     .remove(side, &offer);
+//             }
+//             ExchangeEvent::MarketAdded(product) => self.add_market(&product),
+//             ExchangeEvent::TradeExecuted(product, trade) => {
+//                 self.market_mut(&product).unwrap().trades.push(trade)
+//             }
+//             ExchangeEvent::OrderAdded(order) => self.orders.push(order),
+//             ExchangeEvent::OrderOpened(order) => self.orders.push(order),
+//             ExchangeEvent::OrderFilled(order) => {
+//                 match self.orders.iter().position(|o| o.id == order.id) {
+//                     Some(o) => self.orders[o] = order,
+//                     None => panic!(),
+//                 }
+//             }
+//             ExchangeEvent::OrderClosed(order) => {
+//                 match self.orders.iter().position(|o| o.id == order.id) {
+//                     Some(o) => {
+//                         self.orders.remove(o);
+//                     }
+//                     None => panic!(),
+//                 }
+//             }
+//             ExchangeEvent::Batch(events) => for event in events {
+//                 self.apply(event)
+//             },
+//             ExchangeEvent::Unimplemented(_event) => {}
+//         }
+//     }
+// }
 
 // #[derive(Debug, Serialize, Clone, Default)]
 // pub struct Economy {
