@@ -1,4 +1,4 @@
-use api::{Header, Headers, HttpClient, HttpRequest, HttpResponse, Method, Payload, QueryBuilder};
+use api::{Header, Headers, HttpClient, HttpRequest, HttpResponse, Method, Payload, Query};
 use chrono::Utc;
 use crate as ccex;
 use failure::{Error, ResultExt};
@@ -14,6 +14,7 @@ use std::fmt::{self, Display, Formatter};
 use std::str::FromStr;
 use url::Url;
 use Exchange;
+use std::cell::RefCell;
 
 #[derive(Fail, Debug, Hash, PartialEq, PartialOrd, Eq, Ord, Clone, Deserialize, Serialize)]
 pub enum CurrencyConversionError {
@@ -246,12 +247,21 @@ struct Order {
     pub order_id: i64,
 }
 
-struct Exmo<Client: HttpClient> {
+pub struct Exmo<Client: HttpClient> {
     pub host: Url,
-    pub http_client: Client,
+    pub http_client: RefCell<Client>,
+    pub credential: ccex::Credential,
 }
 
 impl<Client: HttpClient> Exmo<Client> {
+    pub fn new(credential: &ccex::Credential) -> Self {
+        Exmo {
+            host: Url::parse("https://api.exmo.com").unwrap(),
+            http_client: RefCell::new(Client::new()),
+            credential: credential.clone(),
+        }
+    }
+
     fn nonce() -> u32 {
         // TODO: switch to a cached nonce at some point. Using milliseconds
         // elapsed since epoch has the limitations of 1) only allowing one request
@@ -260,25 +270,23 @@ impl<Client: HttpClient> Exmo<Client> {
         (now.timestamp() as u32 - 1518363415u32) * 1000 + now.timestamp_subsec_millis()
     }
 
-    fn get_user_info(
-        &mut self,
-        nonce: u32,
-        credential: &ccex::Credential,
-    ) -> Result<UserInfo, Error> {
-        let query = QueryBuilder::with_capacity(2)
-            .param("nonce", nonce.to_string())
-            .build();
-        let body = query.to_string().trim_left_matches("?").to_owned();
-        let headers = Self::private_headers(credential, &body)?;
+    fn get_user_info(&self, nonce: u32) -> Result<UserInfo, Error> {
+        let query = {
+            let mut query = Query::with_capacity(2);
+            query.insert_param("nonce", nonce.to_string());
+            query.to_string()
+        };
+        let body = query.as_str().trim_left_matches("?").to_owned();
+        let headers = Self::private_headers(&self.credential, &body)?;
         let http_request = HttpRequest {
             method: Method::Post,
             path: "/v1/user_info",
             host: self.host.as_str(),
             headers: Some(headers),
             body: Some(Payload::Text(body)),
-            query: Some(query),
+            query: Some(query.as_str()),
         };
-        let http_response = self.http_client.send(&http_request)?;
+        let http_response = self.http_client.borrow_mut().send(&http_request)?;
         Self::deserialize_private_response(&http_response)
     }
 
@@ -348,8 +356,8 @@ impl<Client: HttpClient> Exmo<Client> {
 }
 
 impl<Client: HttpClient> Exchange for Exmo<Client> {
-    fn get_balances(&mut self, credential: &ccex::Credential) -> Result<Vec<ccex::Balance>, Error> {
-        let user_info = self.get_user_info(Self::nonce(), credential)?;
+    fn get_balances(&self) -> Result<Vec<ccex::Balance>, Error> {
+        let user_info = self.get_user_info(Self::nonce())?;
 
         let mut balances = Vec::with_capacity(user_info.balances.len());
         for (currency, balance) in user_info.balances.into_iter() {
@@ -368,7 +376,7 @@ impl<Client: HttpClient> Exchange for Exmo<Client> {
     }
 
     fn get_orderbooks(
-        &mut self,
+        &self,
         products: &[ccex::CurrencyPair],
     ) -> Result<HashMap<ccex::CurrencyPair, ccex::Orderbook>, Error> {
         let mut exmo_products = Vec::with_capacity(products.len());
@@ -377,19 +385,21 @@ impl<Client: HttpClient> Exchange for Exmo<Client> {
             exmo_products.push(exmo_product.to_string());
         }
 
-        let query = QueryBuilder::with_capacity(2)
-            .param("pair", exmo_products.as_slice().join(","))
-            .param("limit", "100")
-            .build();
+        let query = {
+            let mut query = Query::with_capacity(2);
+            query.insert_param("pair", exmo_products.as_slice().join(","));
+            query.insert_param("limit", "100");
+            query.to_string()
+        };
         let http_request = HttpRequest {
             method: Method::Get,
             host: self.host.as_str(),
             path: "/v1/order_book",
-            query: Some(query),
+            query: Some(query.as_str()),
             body: None,
             headers: None,
         };
-        let http_response = self.http_client.send(&http_request)?;
+        let http_response = self.http_client.borrow_mut().send(&http_request)?;
         let orderbooks: HashMap<String, Orderbook> =
             Self::deserialize_public_response(&http_response)?;
 
@@ -415,11 +425,7 @@ impl<Client: HttpClient> Exchange for Exmo<Client> {
             .collect()
     }
 
-    fn place_order(
-        &mut self,
-        credential: &ccex::Credential,
-        order: ccex::NewOrder,
-    ) -> Result<ccex::Order, Error> {
+    fn place_order(&self, order: ccex::NewOrder) -> Result<ccex::Order, Error> {
         let exmo_product: CurrencyPair = order.product.try_into()?;
         let exmo_instruction = match order.side {
             ccex::Side::Ask => OrderInstruction::LimitSell,
@@ -431,25 +437,27 @@ impl<Client: HttpClient> Exchange for Exmo<Client> {
                 price, quantity, ..
             } => (price, quantity),
         };
-        let query = QueryBuilder::with_capacity(5)
-            .param("nonce", Self::nonce().to_string())
-            .param("pair", exmo_product.to_string())
-            .param("quantity", quantity.to_string())
-            .param("price", price.to_string())
-            .param("type", exmo_instruction.to_string())
-            .build();
-        let body = query.to_string().trim_left_matches("?").to_owned();
-        let headers = Self::private_headers(credential, &body)?;
+        let query = {
+            let mut query = Query::with_capacity(5);
+            query.insert_param("nonce", Self::nonce().to_string());
+            query.insert_param("pair", exmo_product.to_string());
+            query.insert_param("quantity", quantity.to_string());
+            query.insert_param("price", price.to_string());
+            query.insert_param("type", exmo_instruction.to_string());
+            query.to_string()
+        };
+        let body = query.trim_left_matches("?").to_owned();
+        let headers = Self::private_headers(&self.credential, &body)?;
         let http_request = HttpRequest {
             method: Method::Post,
             path: "/v1/order_create",
             host: self.host.as_str(),
             headers: Some(headers),
             body: Some(Payload::Text(body)),
-            query: Some(query),
+            query: Some(query.as_str()),
         };
 
-        let _http_response = self.http_client.send(&http_request)?;
+        let _http_response = self.http_client.borrow_mut().send(&http_request)?;
         // Note: Exmo's `Order` doesn't contain anything useful so we don't need
         // to use it.
         // let response: Order = Self::deserialize_private_response(&http_response)?;

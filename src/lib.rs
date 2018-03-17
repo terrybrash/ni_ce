@@ -29,6 +29,7 @@ pub mod future;
 
 pub mod exmo;
 pub mod liqui;
+pub mod binance;
 // pub mod gemini;
 
 mod model;
@@ -83,21 +84,17 @@ pub trait Exchange {
     /// The number of decimal places supported.
     fn precision(&self) -> u32;
 
-    /// Non-blocking request for a new orderbook for a given `product`.
+    /// Request the orderbooks for given products.
     fn get_orderbooks(
-        &mut self,
+        &self,
         products: &[ccex::CurrencyPair],
     ) -> Result<HashMap<ccex::CurrencyPair, ccex::Orderbook>, Error>;
 
-    /// Non-blocking request to place a new order.
-    fn place_order(
-        &mut self,
-        credential: &ccex::Credential,
-        order: ccex::NewOrder,
-    ) -> Result<ccex::Order, Error>;
+    /// Place a new order.
+    fn place_order(&self, order: ccex::NewOrder) -> Result<ccex::Order, Error>;
 
-    /// Non-blocking request for current currency balances.
-    fn get_balances(&mut self, credential: &ccex::Credential) -> Result<Vec<ccex::Balance>, Error>;
+    /// Get the account's balances available for trading.
+    fn get_balances(&self) -> Result<Vec<ccex::Balance>, Error>;
 }
 
 type Channel<S, R> = (mpsc::Sender<S>, mpsc::Receiver<R>);

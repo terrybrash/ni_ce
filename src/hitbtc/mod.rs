@@ -1,0 +1,1 @@
+pub const ACRONYM: &str = "HITBTC";

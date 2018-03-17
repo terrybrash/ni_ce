@@ -6,6 +6,7 @@ use std::iter::FromIterator;
 use std::ops::{Deref, DerefMut};
 use std::str::FromStr;
 use uuid::Uuid;
+use std::time::Instant;
 
 pub type ID = i64;
 
@@ -560,15 +561,26 @@ impl FromIterator<Offer> for Bids {
     }
 }
 
-#[derive(Debug, Default, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct Orderbook {
+    pub timestamp: Instant, 
     pub asks: Asks,
     pub bids: Bids,
 }
 
+impl Default for Orderbook {
+    fn default() -> Self {
+        Orderbook {
+            timestamp: Instant::now(), 
+            asks: Asks::default(),
+            bids: Bids::default(),
+        }
+    }
+}
+
 impl Orderbook {
     pub fn new(asks: Asks, bids: Bids) -> Self {
-        Orderbook { asks, bids }
+        Orderbook { asks, bids, ..Orderbook::default() }
     }
 
     pub fn remove(&mut self, side: Side, offer: &Offer) -> Option<Offer> {
@@ -606,7 +618,7 @@ impl Orderbook {
     }
 }
 
-#[derive(Debug, Serialize, Clone, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct Market {
     pub product: CurrencyPair,
     pub orderbook: Orderbook,
@@ -625,7 +637,7 @@ impl Market {
     }
 }
 
-#[derive(Debug, Serialize, Clone, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct Exchange {
     pub id: ID,
     pub name: String,

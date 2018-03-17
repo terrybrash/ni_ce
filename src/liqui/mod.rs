@@ -1,7 +1,7 @@
 use crate as ccex;
 use {dual_channel, Exchange};
 use api::{Header, Headers, HttpClient, HttpRequest, HttpResponse, Method, NeedsAuthentication,
-          Payload, PrivateRequest, Query, QueryBuilder, RestResource};
+          Payload, PrivateRequest, Query, RestResource};
 use chrono::Utc;
 use failure::{Error, ResultExt};
 use hex;
@@ -113,9 +113,9 @@ impl TryFrom<ccex::Currency> for Currency {
     type Error = Error;
     fn try_from(currency: ccex::Currency) -> Result<Self, Self::Error> {
         match currency {
-            ccex::Currency::USDT => Ok(Currency(String::from("USDT"))),
-            ccex::Currency::ETH => Ok(Currency(String::from("ETH"))),
-            ccex::Currency::BTC => Ok(Currency(String::from("BTC"))),
+            ccex::Currency::USDT => Ok(Currency(String::from("usdt"))),
+            ccex::Currency::ETH => Ok(Currency(String::from("eth"))),
+            ccex::Currency::BTC => Ok(Currency(String::from("btc"))),
             currency => Err(format_err!("{} isn't supported", currency)),
         }
     }
@@ -205,7 +205,6 @@ pub struct OrderPlacement {
     funds: HashMap<Currency, f64>,
 }
 
-
 // pub struct GetActiveOrders {
 // 	pair: CurrencyPair,
 // 	nonce: u32,
@@ -262,10 +261,19 @@ struct ErrorResponse {
 
 pub struct Liqui<Client: HttpClient> {
     pub host: Url,
-    pub http_client: Client,
+    pub http_client: RefCell<Client>,
+    pub credential: ccex::Credential,
 }
 
 impl<Client: HttpClient> Liqui<Client> {
+    pub fn new(credential: &ccex::Credential) -> Self {
+        Liqui {
+            host: Url::parse("https://api.liqui.io").unwrap(),
+            http_client: RefCell::new(Client::new()),
+            credential: credential.clone(),
+        }
+    }
+
     fn deserialize_public_response<T>(response: &HttpResponse) -> Result<T, Error>
     where
         T: DeserializeOwned,
@@ -337,17 +345,18 @@ impl<Client: HttpClient> Liqui<Client> {
         // of 1) only allowing one request per millisecond and 2) expiring after
         // ~50 days
         let now = Utc::now();
-        (now.timestamp() as u32 - 1516812776u32) * 1000 + now.timestamp_subsec_millis()
+        (now.timestamp() as u32 - 1521186749u32) * 1000 + now.timestamp_subsec_millis()
     }
 
-    fn get_info(&mut self, credential: &ccex::Credential) -> Result<Info, Error> {
+    fn get_info(&self) -> Result<Info, Error> {
         // Liqui encodes its body data as an http query.
-        let body = QueryBuilder::with_capacity(2)
-            .param("method", "getInfo")
-            .param("nonce", Self::nonce().to_string())
-            .build()
-            .to_string();
-        let headers = Self::private_headers(credential, Some(&body))?;
+        let body = {
+            let mut query = Query::with_capacity(2);
+            query.insert_param("method", "getInfo");
+            query.insert_param("nonce", Self::nonce().to_string());
+            query.to_string()
+        };
+        let headers = Self::private_headers(&self.credential, Some(&body))?;
 
         let http_request = HttpRequest {
             method: Method::Post,
@@ -357,21 +366,21 @@ impl<Client: HttpClient> Liqui<Client> {
             headers: Some(headers),
             query: None,
         };
-        let http_response = self.http_client.send(&http_request)?;
+        let http_response = self.http_client.borrow_mut().send(&http_request)?;
         Self::deserialize_private_response(&http_response)
     }
 }
 
 impl<Client: HttpClient> Exchange for Liqui<Client> {
-    fn get_balances(&mut self, credential: &ccex::Credential) -> Result<Vec<ccex::Balance>, Error> {
-        let user_info = self.get_info(credential)?;
+    fn get_balances(&self) -> Result<Vec<ccex::Balance>, Error> {
+        let user_info = self.get_info()?;
 
         user_info.funds.into_iter()
         	// If a currency can't be converted, it means it's been newly
         	// added to Liqui and hasn't been added to the `Currency` enum. In
         	// that case, ignoring it is fine.
             .filter_map(|(currency, amount)| {
-                match Currency::try_from(currency) {
+                match ccex::Currency::try_from(currency) {
                     Ok(currency) => Some((currency, amount)),
                     Err(_) => None,
                 }
@@ -379,14 +388,14 @@ impl<Client: HttpClient> Exchange for Liqui<Client> {
             .map(|(currency, amount)| {
                 let amount = d128::from_f64(amount)
                     .ok_or_else(|| format_err!("Couldn't convert {} into a decimal", amount))?;
-                let balance = ccex::Balance::new(currency.try_into()?, amount);
+                let balance = ccex::Balance::new(currency, amount);
                 Ok(balance)
             })
             .collect()
     }
 
     fn get_orderbooks(
-        &mut self,
+        &self,
         products: &[ccex::CurrencyPair],
     ) -> Result<HashMap<ccex::CurrencyPair, ccex::Orderbook>, Error> {
         let products: Vec<String> = products
@@ -406,7 +415,7 @@ impl<Client: HttpClient> Exchange for Liqui<Client> {
             query: None,
         };
 
-        let http_response = self.http_client.send(&http_request)?;
+        let http_response = self.http_client.borrow_mut().send(&http_request)?;
 
         let orderbook: HashMap<CurrencyPair, Orderbook> =
             Self::deserialize_public_response(&http_response)?;
@@ -454,11 +463,7 @@ impl<Client: HttpClient> Exchange for Liqui<Client> {
             .collect()
     }
 
-    fn place_order(
-        &mut self,
-        credential: &ccex::Credential,
-        order: ccex::NewOrder,
-    ) -> Result<ccex::Order, Error> {
+    fn place_order(&self, order: ccex::NewOrder) -> Result<ccex::Order, Error> {
         let (price, quantity) = match order.instruction {
             ccex::NewOrderInstruction::Limit {
                 price, quantity, ..
@@ -467,16 +472,17 @@ impl<Client: HttpClient> Exchange for Liqui<Client> {
         };
         let product: CurrencyPair = order.product.try_into()?;
         let side: Side = order.side.into();
-        let body = QueryBuilder::with_capacity(6)
-            .param("nonce", Self::nonce().to_string())
-            .param("method", "trade")
-            .param("pair", product.to_string())
-            .param("type", side.to_string())
-            .param("rate", price.to_string())
-            .param("amount", quantity.to_string())
-            .build()
-            .to_string();
-        let headers = Self::private_headers(credential, Some(body.as_str()))?;
+        let body = {
+            let mut query = Query::with_capacity(6);
+            query.insert_param("nonce", Self::nonce().to_string());
+            query.insert_param("method", "trade");
+            query.insert_param("pair", product.to_string());
+            query.insert_param("type", side.to_string());
+            query.insert_param("rate", price.to_string());
+            query.insert_param("amount", quantity.to_string());
+            query.to_string()
+        };
+        let headers = Self::private_headers(&self.credential, Some(body.as_str()))?;
         let http_request = HttpRequest {
             method: Method::Post,
             host: self.host.as_str(),
@@ -486,7 +492,7 @@ impl<Client: HttpClient> Exchange for Liqui<Client> {
             query: None,
         };
 
-        let http_response = self.http_client.send(&http_request)?;
+        let http_response = self.http_client.borrow_mut().send(&http_request)?;
 
         let placed_order: OrderPlacement = Self::deserialize_private_response(&http_response)?;
         let placed_order = ccex::Order {
@@ -782,11 +788,3 @@ impl<Client: HttpClient> Exchange for Liqui<Client> {
         }
     }
 }
-
-// fn sync_rest_client(&self) -> Box<SyncExchangeRestClient> {
-// 	Box::new(SyncLiquiRestClient {
-// 		credential: self.credential.clone(),
-// 		host: Url::parse("https://api.liqui.io").unwrap(),
-// 		client: Client::new(),
-// 	})
-// }

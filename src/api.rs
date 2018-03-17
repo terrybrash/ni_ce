@@ -5,6 +5,7 @@ use base64;
 use std::fmt::{self, Display, Formatter};
 use serde::ser::Serialize;
 use status::StatusCode;
+use std::collections::{HashMap};
 
 use reqwest;
 use tungstenite;
@@ -77,62 +78,34 @@ impl Display for Payload {
 
 #[derive(Debug, Default, Clone, Serialize, Deserialize)]
 pub struct Query {
-    pub params: Vec<(String, String)>,
-    char_len: usize,
+    pub params: HashMap<String, String>,
 }
 
 impl Query {
-    pub fn from_vec<K, V>(params: Vec<(K, V)>) -> Self
+    pub fn with_capacity(capacity: usize) -> Self {
+        Query {
+            params: HashMap::with_capacity(capacity),
+        }
+    }
+
+    pub fn insert_param<K, V>(&mut self, key: K, value: V) -> Option<String>
     where
         K: Into<String>,
         V: Into<String>,
     {
-        // let char_len = params.iter().fold(0, |acc, &(ref name, ref value)| acc + name.len() + value.len());
-        let char_len = 0;
-        let params = params
-            .into_iter()
-            .map(|(k, v)| (k.into(), v.into()))
-            .collect();
-        Query { params, char_len }
+        self.params.insert(key.into(), value.into())
     }
 
     pub fn to_string(&self) -> String {
         if self.params.is_empty() {
             String::new()
         } else {
-            let params: Vec<String> = self.params
-                .iter()
-                .map(|&(ref name, ref value)| [name.as_str(), value.as_str()].join("="))
-                .collect();
-            let query = ["?", &params.as_slice().join("&")].concat();
-            query
+            let query = self.params.iter()
+                .map(|(ref name, ref value)| [name.as_str(), &"=", value.as_str()])
+                .collect::<Vec<[&str; 3]>>()
+                .join(&"&");
+            format!("?{}", query.into_iter().collect::<String>())
         }
-    }
-}
-
-#[derive(Debug, Default)]
-pub struct QueryBuilder {
-    params: Vec<(String, String)>,
-}
-
-impl QueryBuilder {
-    pub fn with_capacity(len: usize) -> Self {
-        QueryBuilder {
-            params: Vec::with_capacity(len),
-        }
-    }
-
-    pub fn param<K, V>(mut self, key: K, value: V) -> Self
-    where
-        K: Into<String>,
-        V: Into<String>,
-    {
-        self.params.push((key.into(), value.into()));
-        self
-    }
-
-    pub fn build(self) -> Query {
-        Query::from_vec(self.params)
     }
 }
 
@@ -316,7 +289,7 @@ pub struct HttpRequest<'a> {
     pub host: &'a str,
     pub headers: Option<Headers>,
     pub body: Option<Payload>,
-    pub query: Option<Query>,
+    pub query: Option<&'a str>,
 }
 
 impl<'a> HttpRequest<'a> {
@@ -358,6 +331,8 @@ impl HttpClient for reqwest::Client {
     }
 
     fn send(&mut self, request: &HttpRequest) -> Result<HttpResponse, Error> {
+        println!("{}", request);
+
         let mut request_builder = self.request(
             request.method.clone().into(),
             request.url().map_err(|e| format_err!("{}", e))?,
@@ -383,6 +358,8 @@ impl HttpClient for reqwest::Client {
 
         let request = request_builder.build()?;
         let response = self.execute(request)?.into();
+
+        println!("{}", response);
 
         Ok(response)
     }
