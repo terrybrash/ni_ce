@@ -31,6 +31,7 @@ pub mod exmo;
 pub mod liqui;
 pub mod binance;
 // pub mod gemini;
+// pub mod hitbtc;
 
 mod model;
 mod status;
@@ -41,32 +42,6 @@ use rust_decimal::Decimal as d128;
 use std::sync::mpsc;
 use std::collections::HashMap;
 use crate as ccex;
-
-// /// The interface to an exchange.
-// pub trait Exchange<C> where C: HttpClient {
-// 	fn name(&self) -> &'static str;
-//
-//     /// The maker fee as a percentage. `1.0` is equal to 100%.
-// 	fn maker_fee(&self) -> d128;
-//
-//     /// The taker fee as a percentage. `1.0` is equal to 100%.
-//     fn taker_fee(&self) -> d128;
-//
-//     /// The minimum quantity allowed for trades of `product`.
-// 	fn min_quantity(&self, product: CurrencyPair) -> Option<d128>;
-//
-// 	/// The number of decimal places supported.
-// 	fn precision(&self) -> u32;
-//
-//     /// Non-blocking request for a new orderbook for a given `product`.
-//     fn orderbook(&mut self, product: CurrencyPair) -> Future<Result<Orderbook, Error>>;
-//
-//     /// Non-blocking request to place a new order.
-//     fn place_order(&mut self, order: NewOrder) -> Future<Result<Order, Error>>;
-//
-//     /// Non-blocking request for current currency balances.
-//     fn balances(&mut self) -> Future<Result<Vec<Balance>, Error>>;
-// }
 
 /// The interface to an exchange.
 pub trait Exchange {
@@ -94,14 +69,5 @@ pub trait Exchange {
     fn place_order(&self, order: ccex::NewOrder) -> Result<ccex::Order, Error>;
 
     /// Get the account's balances available for trading.
-    fn get_balances(&self) -> Result<Vec<ccex::Balance>, Error>;
-}
-
-type Channel<S, R> = (mpsc::Sender<S>, mpsc::Receiver<R>);
-fn dual_channel<A, B>() -> (Channel<A, B>, Channel<B, A>) {
-    let (sender_a, receiver_a) = mpsc::channel();
-    let (sender_b, receiver_b) = mpsc::channel();
-    let channel_ab = (sender_a, receiver_b);
-    let channel_ba = (sender_b, receiver_a);
-    (channel_ab, channel_ba)
+    fn get_balances(&self) -> Result<HashMap<ccex::Currency, d128>, Error>;
 }

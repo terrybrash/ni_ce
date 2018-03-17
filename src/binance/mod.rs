@@ -175,16 +175,13 @@ impl<Client: HttpClient> Exchange for Binance<Client> {
         unimplemented!()
     }
 
-    fn get_balances(&self) -> Result<Vec<ccex::Balance>, Error> {
+    fn get_balances(&self) -> Result<HashMap<ccex::Currency, d128>, Error> {
         let account = self.get_account()?;
 
         account.balances.into_iter()
             .filter_map(|balance| {
                 match ccex::Currency::try_from(balance.asset) {
-                    Ok(currency) => {
-                        let balance = ccex::Balance::new(currency, balance.free);
-                        Some(Ok(balance))
-                    }
+                    Ok(currency) => Some(Ok((currency, balance.free))),
                     Err(_) => None,
                 }
             })

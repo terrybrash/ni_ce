@@ -1,5 +1,5 @@
 use crate as ccex;
-use {dual_channel, Exchange};
+use {Exchange};
 use api::{Header, Headers, HttpClient, HttpRequest, HttpResponse, Method, NeedsAuthentication,
           Payload, PrivateRequest, Query, RestResource};
 use chrono::Utc;
@@ -372,24 +372,23 @@ impl<Client: HttpClient> Liqui<Client> {
 }
 
 impl<Client: HttpClient> Exchange for Liqui<Client> {
-    fn get_balances(&self) -> Result<Vec<ccex::Balance>, Error> {
+    fn get_balances(&self) -> Result<HashMap<ccex::Currency, d128>, Error> {
         let user_info = self.get_info()?;
 
         user_info.funds.into_iter()
         	// If a currency can't be converted, it means it's been newly
         	// added to Liqui and hasn't been added to the `Currency` enum. In
         	// that case, ignoring it is fine.
-            .filter_map(|(currency, amount)| {
+            .filter_map(|(currency, balance)| {
                 match ccex::Currency::try_from(currency) {
-                    Ok(currency) => Some((currency, amount)),
+                    Ok(currency) => Some((currency, balance)),
                     Err(_) => None,
                 }
             })
-            .map(|(currency, amount)| {
-                let amount = d128::from_f64(amount)
-                    .ok_or_else(|| format_err!("Couldn't convert {} into a decimal", amount))?;
-                let balance = ccex::Balance::new(currency, amount);
-                Ok(balance)
+            .map(|(currency, balance)| {
+                let balance = d128::from_f64(balance)
+                    .ok_or_else(|| format_err!("Couldn't convert {} into a decimal", balance))?;
+                Ok((currency, balance))
             })
             .collect()
     }

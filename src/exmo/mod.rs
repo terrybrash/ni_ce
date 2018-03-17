@@ -356,23 +356,23 @@ impl<Client: HttpClient> Exmo<Client> {
 }
 
 impl<Client: HttpClient> Exchange for Exmo<Client> {
-    fn get_balances(&self) -> Result<Vec<ccex::Balance>, Error> {
+    fn get_balances(&self) -> Result<HashMap<ccex::Currency, d128>, Error> {
         let user_info = self.get_user_info(Self::nonce())?;
 
-        let mut balances = Vec::with_capacity(user_info.balances.len());
-        for (currency, balance) in user_info.balances.into_iter() {
-            match currency.parse::<Currency>() {
-                Ok(currency) => {
-                    let currency = ccex::Currency::from(currency);
-                    let balance = ccex::Balance::new(currency, balance);
-                    balances.push(balance);
+        user_info.balances.into_iter()
+            .filter_map(|(currency, balance)| {
+                match currency.parse::<Currency>() {
+                    Ok(currency) => {
+                        let currency = ccex::Currency::from(currency);
+                        Some(Ok((currency, balance)))
+                    }
+                    Err(ParseCurrencyError::InvalidOrUnsupportedCurrency(_)) => {
+                        // The currency isn't support. We'll just silently skip it.
+                        None
+                    }
                 }
-                Err(ParseCurrencyError::InvalidOrUnsupportedCurrency(_)) => {
-                    // The currency isn't support. We'll just silently skip it.
-                }
-            }
-        }
-        Ok(balances)
+            })
+            .collect()
     }
 
     fn get_orderbooks(

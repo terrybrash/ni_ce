@@ -248,18 +248,6 @@ impl FromStr for Currency {
     }
 }
 
-#[derive(Debug, Hash, Eq, PartialEq, Copy, Clone, Serialize, Deserialize)]
-pub enum Environment {
-    Production,
-    Sandbox,
-}
-
-impl fmt::Display for Environment {
-    fn fmt(&self, f: &mut fmt::Formatter) -> Result<(), fmt::Error> {
-        write!(f, "{:?}", self)
-    }
-}
-
 #[derive(Debug, Hash, PartialEq, Clone, Serialize, Deserialize)]
 pub struct Balance {
     pub currency: Currency,
@@ -314,14 +302,6 @@ pub enum NewOrderInstruction {
 // Bfinex:
 //   Sell 1BTC for CURRENT_PRICE
 //   Buy  1BTC for CURRENT_PRICE
-//
-// pub struct NewMarketOrder {
-//     pub id: String,
-//     pub side: Side,
-//     pub product: CurrencyPair,
-
-//     pub funds: d128,
-// }
 
 #[derive(Debug, Hash, Eq, PartialEq, Copy, Clone, Serialize, Deserialize)]
 pub enum TimeInForce {
@@ -330,22 +310,32 @@ pub enum TimeInForce {
 
     /// GFD
     GoodForDay,
+
+    /// GFH
     GoodForHour,
+
+    /// GFM
     GoodForMin,
 
-    /// [GTC](https://en.wikipedia.org/wiki/Good_%27til_cancelled)
+    /// [GTC]
+    ///
+    /// [GTC]: https://en.wikipedia.org/wiki/Good_%27til_cancelled
     GoodTillCancelled,
 
-    /// [IOC](https://en.wikipedia.org/wiki/Immediate_or_cancel)
+    /// [IOC]
     ///
     /// Order must be immediately executed or cancelled.
-    /// Unlike `FillOrKill`, IOC orders can be partially filled.
+    /// Unlike `FillOrKill`, [IOC] orders can be partially filled.
+    ///
+    /// [IOC]: https://en.wikipedia.org/wiki/Immediate_or_cancel
     ImmediateOrCancel,
 
-    /// [FOK](https://en.wikipedia.org/wiki/Fill_or_kill)
+    /// [FOK]
     ///
     /// Order must be immediately executed or cancelled.
-    /// Unlike `ImmediateOrCancel`, FOK orders *require* the full quantity to be executed.
+    /// Unlike `ImmediateOrCancel`, [FOK] orders *require* the full quantity to be executed.
+    ///
+    /// [FOK]: https://en.wikipedia.org/wiki/Fill_or_kill
     FillOrKill,
 }
 
@@ -439,7 +429,10 @@ pub struct Offer {
 
 impl Offer {
     pub fn new(price: d128, quantity: d128) -> Self {
-        Offer { price, quantity }
+        Offer {
+            price, 
+            quantity,
+        }
     }
 
     pub fn total(&self) -> d128 {
@@ -563,7 +556,6 @@ impl FromIterator<Offer> for Bids {
 
 #[derive(Debug, Clone)]
 pub struct Orderbook {
-    pub timestamp: Instant, 
     pub asks: Asks,
     pub bids: Bids,
 }
@@ -571,7 +563,6 @@ pub struct Orderbook {
 impl Default for Orderbook {
     fn default() -> Self {
         Orderbook {
-            timestamp: Instant::now(), 
             asks: Asks::default(),
             bids: Bids::default(),
         }
@@ -580,7 +571,10 @@ impl Default for Orderbook {
 
 impl Orderbook {
     pub fn new(asks: Asks, bids: Bids) -> Self {
-        Orderbook { asks, bids, ..Orderbook::default() }
+        Orderbook { 
+            asks, 
+            bids,
+        }
     }
 
     pub fn remove(&mut self, side: Side, offer: &Offer) -> Option<Offer> {
@@ -597,12 +591,12 @@ impl Orderbook {
         }
     }
 
-    pub fn highest_bid(&self) -> Option<Offer> {
-        self.bids.last().cloned()
+    pub fn highest_bid(&self) -> Option<&Offer> {
+        self.bids.last()
     }
 
-    pub fn lowest_ask(&self) -> Option<Offer> {
-        self.asks.first().cloned()
+    pub fn lowest_ask(&self) -> Option<&Offer> {
+        self.asks.first()
     }
 
     pub fn supply(&self) -> d128 {
