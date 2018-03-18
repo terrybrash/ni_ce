@@ -78,34 +78,35 @@ impl Display for Payload {
 
 #[derive(Debug, Default, Clone, Serialize, Deserialize)]
 pub struct Query {
-    pub params: HashMap<String, String>,
+    pub params: Vec<(String, String)>,
 }
 
 impl Query {
     pub fn with_capacity(capacity: usize) -> Self {
         Query {
-            params: HashMap::with_capacity(capacity),
+            params: Vec::with_capacity(capacity),
         }
     }
 
-    pub fn insert_param<K, V>(&mut self, key: K, value: V) -> Option<String>
+    pub fn append_param<K, V>(&mut self, key: K, value: V)
     where
         K: Into<String>,
         V: Into<String>,
     {
-        self.params.insert(key.into(), value.into())
+        self.params.push((key.into(), value.into()));
     }
 
     pub fn to_string(&self) -> String {
         if self.params.is_empty() {
             String::new()
         } else {
-            let query = self.params
+            self.params
                 .iter()
-                .map(|(name, value)| [name.as_str(), "=", value.as_str()])
+                .map(|&(ref name, ref value)| [name.as_str(), "=", value.as_str()])
                 .collect::<Vec<[&str; 3]>>()
-                .join(&"&");
-            format!("?{}", query.into_iter().collect::<String>())
+                .join(&"&")
+                .into_iter()
+                .collect()
         }
     }
 }
@@ -299,7 +300,7 @@ impl<'a> HttpRequest<'a> {
         match self.query {
             Some(query) => Url::parse(self.host)?
                 .join(self.path)?
-                .join(query.to_string().as_str()),
+                .join(format!("?{}", query.to_string()).as_str()),
             None => Url::parse(self.host)?.join(self.path),
         }
     }
@@ -333,8 +334,6 @@ impl HttpClient for reqwest::Client {
     }
 
     fn send(&mut self, request: &HttpRequest) -> Result<HttpResponse, Error> {
-        println!("{}", request);
-
         let mut request_builder = self.request(
             request.method.clone().into(),
             request.url().map_err(|e| format_err!("{}", e))?,
@@ -360,8 +359,6 @@ impl HttpClient for reqwest::Client {
 
         let request = request_builder.build()?;
         let response = self.execute(request)?.into();
-
-        println!("{}", response);
 
         Ok(response)
     }

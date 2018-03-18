@@ -31,18 +31,12 @@ impl<Client: HttpClient> Binance<Client> {
 
     fn get_account(&self) -> Result<Account, Error> {
         let query = {
-            let mut query = Query::with_capacity(3);
-            query.insert_param("timestamp", Self::timestamp_now().to_string());
-            let signature = Self::private_signature(
-                &self.credential,
-                query.to_string().trim_left_matches('?'),
-            )?;
-            query.insert_param("signature", signature);
+            let mut query = Query::with_capacity(2);
+            query.append_param("timestamp", Self::timestamp_now().to_string());
+            let signature = Self::private_signature(&self.credential, query.to_string().as_str())?;
+            query.append_param("signature", signature);
             query.to_string()
         };
-        // let query = format!("?timestamp={}", Self::timestamp_now());
-        // let signature = Self::private_seignature(&self.credential, query.as_str());
-        // let query = format!("{}&{}", query, signature);
         let headers = Self::private_headers(&self.credential);
         let http_request = HttpRequest {
             method: Method::Get,
@@ -65,7 +59,6 @@ impl<Client: HttpClient> Binance<Client> {
     }
 
     fn private_signature(credential: &ccex::Credential, query: &str) -> Result<String, Error> {
-        println!("{}", query);
         let mut mac =
             Hmac::<Sha256>::new(credential.secret.as_bytes()).map_err(|e| format_err!("{:?}", e))?;
         mac.input(query.as_bytes());
@@ -114,9 +107,10 @@ impl<Client: HttpClient> Exchange for Binance<Client> {
 
     fn min_quantity(&self, product: ccex::CurrencyPair) -> Option<d128> {
         use Currency::*;
+        use CurrencyPair;
         match product {
-            ccex::CurrencyPair(ETH, BTC) => Some(d128::new(1, 3)),
-            ccex::CurrencyPair(ETH, USDT) => Some(d128::new(1, 5)),
+            CurrencyPair(ETH, BTC) => Some(d128::new(1, 3)),
+            CurrencyPair(ETH, USDT) => Some(d128::new(1, 5)),
             _ => None,
         }
     }
@@ -137,8 +131,8 @@ impl<Client: HttpClient> Exchange for Binance<Client> {
             let query = {
                 let mut query = Query::with_capacity(2);
                 let CurrencyPair(product) = product.try_into()?;
-                query.insert_param("symbol", product);
-                query.insert_param("limit", "100");
+                query.append_param("symbol", product);
+                query.append_param("limit", "100");
                 query.to_string()
             };
             let http_request = HttpRequest {
@@ -156,8 +150,8 @@ impl<Client: HttpClient> Exchange for Binance<Client> {
             #[serde(rename_all = "camelCase")]
             struct Orderbook {
                 // last_update_id: u64,
-                bids: Vec<(d128, d128, ())>,
-                asks: Vec<(d128, d128, ())>,
+                bids: Vec<(d128, d128, [(); 0])>,
+                asks: Vec<(d128, d128, [(); 0])>,
             }
             let orderbook: Orderbook = Self::deserialize_public_response(&http_response)?;
             let asks = orderbook
@@ -176,7 +170,41 @@ impl<Client: HttpClient> Exchange for Binance<Client> {
         Ok(orderbooks)
     }
 
-    fn place_order(&self, _order: ccex::NewOrder) -> Result<ccex::Order, Error> {
+    fn place_order(&self, order: ccex::NewOrder) -> Result<ccex::Order, Error> {
+        let query = {
+            let mut query = Query::with_capacity(12);
+            query.append_param("timestamp", Self::timestamp_now().to_string());
+            let CurrencyPair(product) = order.product.try_into()?;
+            query.append_param("symbol", product);
+            match order.side {
+                ccex::Side::Ask => query.append_param("side", "SELL"),
+                ccex::Side::Bid => query.append_param("side", "BUY"),
+            }
+            match order.instruction {
+                ccex::NewOrderInstruction::Limit {
+                    price,
+                    quantity,
+                    time_in_force,
+                } => {
+                    query.append_param("type", "LIMIT");
+                    query.append_param("quantity", quantity.to_string());
+                    query.append_param("price", price.to_string());
+                    match time_in_force {
+                        ccex::TimeInForce::GoodTillCancelled => {
+                            query.append_param("timeInForce", "GTC")
+                        }
+                        ccex::TimeInForce::ImmediateOrCancel => {
+                            query.append_param("timeInForce", "IOC")
+                        }
+                        ccex::TimeInForce::FillOrKill => query.append_param("timeInForce", "FOK"),
+                        time_in_force => {
+                            return Err(format_err!("{:?} isn't supported", time_in_force))
+                        }
+                    }
+                }
+            }
+            query.to_string()
+        };
         unimplemented!()
     }
 
@@ -262,16 +290,12 @@ impl TryFrom<CurrencyPair> for ccex::CurrencyPair {
         // DOESNT USE A SEPARATOR IN CURRENCY PAIRS ON THEIR API WHY!!!!!!!!!!!
         // But they use a separator in currency pairs on their exchange????????
         // These people are fucking braindead holy shit.
+        use Currency::*;
+        use CurrencyPair;
         match currency_pair.to_uppercase().as_str() {
-            "BTCUSDT" => Ok(ccex::CurrencyPair(
-                ccex::Currency::BTC,
-                ccex::Currency::USDT,
-            )),
-            "ETHBTC" => Ok(ccex::CurrencyPair(ccex::Currency::ETH, ccex::Currency::BTC)),
-            "ETHUSDT" => Ok(ccex::CurrencyPair(
-                ccex::Currency::ETH,
-                ccex::Currency::USDT,
-            )),
+            "BTCUSDT" => Ok(CurrencyPair(BTC, USDT)),
+            "ETHBTC" => Ok(CurrencyPair(ETH, BTC)),
+            "ETHUSDT" => Ok(CurrencyPair(ETH, USDT)),
             currency_pair => Err(format_err!("{} isn't supported", currency_pair)),
         }
     }

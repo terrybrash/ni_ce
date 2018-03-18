@@ -346,8 +346,8 @@ impl<Client: HttpClient> Liqui<Client> {
         // Liqui encodes its body data as an http query.
         let body = {
             let mut query = Query::with_capacity(2);
-            query.insert_param("method", "getInfo");
-            query.insert_param("nonce", Self::nonce().to_string());
+            query.append_param("method", "getInfo");
+            query.append_param("nonce", Self::nonce().to_string());
             query.to_string()
         };
         let headers = Self::private_headers(&self.credential, Some(&body))?;
@@ -467,12 +467,12 @@ impl<Client: HttpClient> Exchange for Liqui<Client> {
         let side: Side = order.side.into();
         let body = {
             let mut query = Query::with_capacity(6);
-            query.insert_param("nonce", Self::nonce().to_string());
-            query.insert_param("method", "trade");
-            query.insert_param("pair", product.to_string());
-            query.insert_param("type", side.to_string());
-            query.insert_param("rate", price.to_string());
-            query.insert_param("amount", quantity.to_string());
+            query.append_param("nonce", Self::nonce().to_string());
+            query.append_param("method", "trade");
+            query.append_param("pair", product.to_string());
+            query.append_param("type", side.to_string());
+            query.append_param("rate", price.to_string());
+            query.append_param("amount", quantity.to_string());
             query.to_string()
         };
         let headers = Self::private_headers(&self.credential, Some(body.as_str()))?;

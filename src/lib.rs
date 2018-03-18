@@ -3,7 +3,7 @@
 #![feature(crate_in_paths)]
 #![feature(test)]
 #![feature(try_from)]
-// #![allow(warnings)]
+#![allow(warnings)]
 
 extern crate base64;
 extern crate chrono;

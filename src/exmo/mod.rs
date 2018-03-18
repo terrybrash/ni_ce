@@ -273,7 +273,7 @@ impl<Client: HttpClient> Exmo<Client> {
     fn get_user_info(&self, nonce: u32) -> Result<UserInfo, Error> {
         let query = {
             let mut query = Query::with_capacity(2);
-            query.insert_param("nonce", nonce.to_string());
+            query.append_param("nonce", nonce.to_string());
             query.to_string()
         };
         let body = query.as_str().trim_left_matches('?').to_owned();
@@ -389,8 +389,8 @@ impl<Client: HttpClient> Exchange for Exmo<Client> {
 
         let query = {
             let mut query = Query::with_capacity(2);
-            query.insert_param("pair", exmo_products.as_slice().join(","));
-            query.insert_param("limit", "100");
+            query.append_param("pair", exmo_products.as_slice().join(","));
+            query.append_param("limit", "100");
             query.to_string()
         };
         let http_request = HttpRequest {
@@ -441,11 +441,11 @@ impl<Client: HttpClient> Exchange for Exmo<Client> {
         };
         let query = {
             let mut query = Query::with_capacity(5);
-            query.insert_param("nonce", Self::nonce().to_string());
-            query.insert_param("pair", exmo_product.to_string());
-            query.insert_param("quantity", quantity.to_string());
-            query.insert_param("price", price.to_string());
-            query.insert_param("type", exmo_instruction.to_string());
+            query.append_param("nonce", Self::nonce().to_string());
+            query.append_param("pair", exmo_product.to_string());
+            query.append_param("quantity", quantity.to_string());
+            query.append_param("price", price.to_string());
+            query.append_param("type", exmo_instruction.to_string());
             query.to_string()
         };
         let body = query.trim_left_matches('?').to_owned();
