@@ -649,7 +649,8 @@ mod tests {
         status_code: StatusCode,
         _default_code: StatusCode,
         reason: Option<&str>,
-    ) {
+    )
+    {
         assert_eq!(StatusCode::from_u16(num), status_code);
         assert_eq!(status_code.as_u16(), num);
         //assert_eq!(status_code.class().default_code(), default_code);

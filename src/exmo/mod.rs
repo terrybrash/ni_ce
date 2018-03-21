@@ -270,7 +270,7 @@ impl<Client: HttpClient> Exmo<Client> {
         (now.timestamp() as u32 - 1_518_363_415u32) * 1000 + now.timestamp_subsec_millis()
     }
 
-    fn get_user_info(&self, nonce: u32) -> Result<UserInfo, Error> {
+    pub fn get_user_info(&self, nonce: u32) -> Result<UserInfo, Error> {
         let query = {
             let mut query = Query::with_capacity(2);
             query.append_param("nonce", nonce.to_string());
@@ -290,6 +290,40 @@ impl<Client: HttpClient> Exmo<Client> {
         Self::deserialize_private_response(&http_response)
     }
 
+    fn place_limit_order(&self, product: ccex::CurrencyPair, price: d128, quantity: d128, time_in_force: ccex::TimeInForce, side: ccex::Side) -> Result<Order, Error> {
+        let query = {
+            let CurrencyPair(product) = product.try_into()?;
+            let mut query = Query::with_capacity(5);
+            query.append_param("nonce", Self::nonce().to_string());
+            query.append_param("pair", product);
+            query.append_param("quantity", quantity.to_string());
+            query.append_param("price", price.to_string());
+            match side {
+                ccex::Side::Ask => query.append_param("type", "LimitSell"),
+                ccex::Side::Bid => query.append_param("type", "LimitBuy"),
+            }
+            query.to_string()
+        };
+        let body = query.as_str();
+        let headers = Self::private_headers(&self.credential, body)?;
+        let http_request = HttpRequest {
+            method: Method::Post,
+            path: "/v1/order_create",
+            host: self.host.as_str(),
+            headers: Some(headers),
+            body: Some(Payload::Text(body.to_owned())),
+            query: Some(query.as_str()),
+        };
+
+        let _http_response = self.http_client.borrow_mut().send(&http_request)?;
+        // Note: Exmo's `Order` doesn't contain anything useful so we don't need
+        // to use it.
+        // let response: Order = Self::deserialize_private_response(&http_response)?;
+        
+        // Ok(order)
+        unimplemented!()
+    }
+    
     fn private_headers(
         credential: &ccex::Credential,
         request_body: &str,
@@ -353,6 +387,8 @@ impl<Client: HttpClient> Exmo<Client> {
             None => panic!(),
         }
     }
+
+
 }
 
 impl<Client: HttpClient> Exchange for Exmo<Client> {
@@ -369,7 +405,7 @@ impl<Client: HttpClient> Exchange for Exmo<Client> {
                         Some(Ok((currency, balance)))
                     }
                     Err(ParseCurrencyError::InvalidOrUnsupportedCurrency(_)) => {
-                        // The currency isn't support. We'll just silently skip it.
+                        // The currency isn't supported. We'll just silently skip it.
                         None
                     }
                 }
@@ -426,6 +462,15 @@ impl<Client: HttpClient> Exchange for Exmo<Client> {
             })
             .collect()
     }
+
+    // fn place_limit_buy_order(&self, product: ccex::CurrencyPair, price: d128, quantity: d128, time_in_force: TimeInForce) -> Result<Order, Error> {
+    //     place_limit_order(product, price, quantity, time_in_force, ccex::Side::Bid)
+    // }
+    //
+    // fn place_limit_sell_order(&self, product: ccex::CurrencyPair, price: d128, quantity: d128, time_in_force: TimeInForce) -> Result<Order, Error> {
+    //     place_limit_order(product, price, quantity, time_in_Force, ccex::Side::Ask)
+    // }
+    //
 
     fn place_order(&self, order: ccex::NewOrder) -> Result<ccex::Order, Error> {
         let exmo_product: CurrencyPair = order.product.try_into()?;
@@ -548,104 +593,3 @@ impl<Client: HttpClient> Exchange for Exmo<Client> {
         }
     }
 }
-
-// pub struct Exmo {
-//     credential: Credential,
-//     orderbook_channel: (mpsc::Sender<(ccex::CurrencyPair,
-//     FutureLock<Result<ccex::Orderbook, Error>>)>, ()),
-//     place_order_channel: (mpsc::Sender<(ccex::NewOrder,
-//     FutureLock<Result<ccex::Order, Error>>)>, ()),
-//     balances_channel: (mpsc::Sender<((),
-//     FutureLock<Result<Vec<ccex::Balance>, Error>>)>, ()),
-// }
-//
-// impl Exmo {
-//     /// Maximum REST requests per minute.
-//     const MAX_REQUESTS_PER_MIN: u32 = 180;
-//
-//     /// The average amount of requests allowed every second. This can probably
-//     /// be exceeded in bursts as long as `MAX_REQUESTS_PER_MIN` isn't
-//     /// exceeded. I don't know.
-//     const AVERAGE_REQUESTS_PER_SEC: u32 = Self::MAX_REQUESTS_PER_MIN / 60;
-//
-//     /// The average amount of seconds allowed between requests.
-//     const AVERAGE_SECS_PER_REQUEST: f64 = 1000.0 / Self::AVERAGE_REQUESTS_PER_SEC as f64;
-//
-//     /// Exmo's REST domain.
-//     const REST_DOMAIN: &'static str = "https://api.exmo.com";
-//
-//     pub fn new<Client>(credential: Credential) -> Self
-//     where Client: HttpClient {
-//         let new_sync_client = || {
-//             SyncExmoRestClient {
-//                 credential: credential.clone(),
-//                 host: Url::parse(Self::REST_DOMAIN).unwrap(),
-//                 client: Client::new(),
-//             }
-//         };
-//
-//         Exmo {
-//             credential: credential.clone(),
-//             orderbook_channel: Exmo::spawn_orderbook_thread(new_sync_client()),
-//             place_order_channel: Exmo::spawn_order_thread(new_sync_client()),
-//             balances_channel: Exmo::spawn_balances_thread(new_sync_client()),
-//         }
-//     }
-//
-//     fn spawn_orderbook_thread<Client: HttpClient>(mut client: SyncExmoRestClient<Client>) -> (mpsc::Sender<(ccex::CurrencyPair, FutureLock<Result<ccex::Orderbook, Error>>)>, ()) {
-//         let (send, recv) = mpsc::channel::<(ccex::CurrencyPair, FutureLock<Result<ccex::Orderbook, Error>>)>();
-//         thread::spawn(move || {
-//             for (product, lock) in recv.iter() {
-//                 let orderbook = client.orderbook(product);
-//                 lock.send(orderbook);
-//             }
-//         });
-//         (send, ())
-//     }
-//
-//     fn spawn_order_thread<Client: HttpClient>(mut client: SyncExmoRestClient<Client>) -> (mpsc::Sender<(ccex::NewOrder, FutureLock<Result<ccex::Order, Error>>)>, ()) {
-//         let (send, recv) = mpsc::channel::<(ccex::NewOrder, FutureLock<Result<ccex::Order, Error>>)>();
-//         thread::spawn(move || {
-//             for (new_order, lock) in recv.iter() {
-//                 let order_result = client.place_order(new_order);
-//                 lock.send(order_result);
-//             }
-//         });
-//         (send, ())
-//     }
-//
-//     fn spawn_balances_thread<Client: HttpClient>(mut client: SyncExmoRestClient<Client>) -> (mpsc::Sender<((), FutureLock<Result<Vec<ccex::Balance>, Error>>)>, ()) {
-//         let (send, recv) = mpsc::channel::<((), FutureLock<Result<Vec<ccex::Balance>, Error>>)>();
-//         thread::spawn(move || {
-//             for ((), lock) in recv.iter() {
-//                 let balances_result = client.balances();
-//                 lock.send(balances_result);
-//             }
-//         });
-//         (send, ())
-//     }
-// }
-//
-// impl<Client> Exchange<Client> for Exmo
-// where Client: HttpClient {
-//     fn orderbook(&mut self, product: ccex::CurrencyPair) -> Future<Result<ccex::Orderbook, Error>> {
-//         let (future, lock) = Future::await();
-//         let (ref mut sender, _) = self.orderbook_channel;
-//         sender.send((product, lock));
-//         future
-//     }
-//
-//     fn place_order(&mut self, order: ccex::NewOrder) -> Future<Result<ccex::Order, Error>> {
-//         let (future, lock) = Future::await();
-//         let (ref mut sender, _) = self.place_order_channel;
-//         sender.send((order, lock));
-//         future
-//     }
-//
-//     fn balances(&mut self) -> Future<Result<Vec<ccex::Balance>, Error>> {
-//         let (future, lock) = Future::await();
-//         let (ref mut sender, _) = self.balances_channel;
-//         sender.send(((), lock));
-//         future
-//     }
-// }

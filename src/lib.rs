@@ -27,7 +27,7 @@ extern crate uuid;
 pub mod api;
 pub mod future;
 
-pub mod exmo;
+// pub mod exmo;
 pub mod liqui;
 pub mod binance;
 // pub mod gemini;

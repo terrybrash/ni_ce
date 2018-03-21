@@ -398,12 +398,14 @@ impl From<NewOrderInstruction> for OrderInstruction {
                 price,
                 quantity,
                 time_in_force,
-            } => OrderInstruction::Limit {
-                price,
-                original_quantity: quantity,
-                remaining_quantity: quantity,
-                time_in_force,
-            },
+            } => {
+                OrderInstruction::Limit {
+                    price,
+                    original_quantity: quantity,
+                    remaining_quantity: quantity,
+                    time_in_force,
+                }
+            }
         }
     }
 }
@@ -477,9 +479,7 @@ impl DerefMut for Asks {
 
 impl FromIterator<Offer> for Asks {
     fn from_iter<I>(offers: I) -> Self
-    where
-        I: IntoIterator<Item = Offer>,
-    {
+    where I: IntoIterator<Item = Offer> {
         let offers = offers.into_iter();
 
         let (size, _) = offers.size_hint();
@@ -534,9 +534,7 @@ impl DerefMut for Bids {
 
 impl FromIterator<Offer> for Bids {
     fn from_iter<I>(offers: I) -> Self
-    where
-        I: IntoIterator<Item = Offer>,
-    {
+    where I: IntoIterator<Item = Offer> {
         let offers = offers.into_iter();
 
         let (size, _) = offers.size_hint();

@@ -70,16 +70,12 @@ impl<Client: HttpClient> Binance<Client> {
     }
 
     fn deserialize_private_response<T>(response: &HttpResponse) -> Result<T, Error>
-    where
-        T: DeserializeOwned,
-    {
+    where T: DeserializeOwned {
         Self::deserialize_public_response(response)
     }
 
     fn deserialize_public_response<T>(response: &HttpResponse) -> Result<T, Error>
-    where
-        T: DeserializeOwned,
-    {
+    where T: DeserializeOwned {
         let body = match response.body {
             Some(Payload::Text(ref body)) => body,
             Some(Payload::Binary(_)) => panic!(),
@@ -122,7 +118,8 @@ impl<Client: HttpClient> Exchange for Binance<Client> {
     fn get_orderbooks(
         &self,
         products: &[ccex::CurrencyPair],
-    ) -> Result<HashMap<ccex::CurrencyPair, ccex::Orderbook>, Error> {
+    ) -> Result<HashMap<ccex::CurrencyPair, ccex::Orderbook>, Error>
+    {
         // Binance doesn't support requests for multiple orderbooks in a single call so they have
         // to be done in separate requests.
 
@@ -214,9 +211,11 @@ impl<Client: HttpClient> Exchange for Binance<Client> {
         account
             .balances
             .into_iter()
-            .filter_map(|balance| match ccex::Currency::try_from(balance.asset) {
-                Ok(currency) => Some(Ok((currency, balance.free))),
-                Err(_) => None,
+            .filter_map(|balance| {
+                match ccex::Currency::try_from(balance.asset) {
+                    Ok(currency) => Some(Ok((currency, balance.free))),
+                    Err(_) => None,
+                }
             })
             .collect()
     }

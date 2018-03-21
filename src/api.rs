@@ -5,7 +5,6 @@ use base64;
 use std::fmt::{self, Display, Formatter};
 use serde::ser::Serialize;
 use status::StatusCode;
-use std::collections::HashMap;
 
 use reqwest;
 use tungstenite;
@@ -22,8 +21,7 @@ impl Header {
     pub fn new<N, V>(name: N, value: V) -> Self
     where
         N: Into<String>,
-        V: Into<String>,
-    {
+        V: Into<String>, {
         Header {
             name: name.into(),
             values: vec![value.into()],
@@ -33,8 +31,7 @@ impl Header {
     pub fn from_vec<N, V>(name: N, values: Vec<V>) -> Self
     where
         N: Into<String>,
-        V: Into<String>,
-    {
+        V: Into<String>, {
         Header {
             name: name.into(),
             values: values.into_iter().map(Into::into).collect(),
@@ -91,8 +88,7 @@ impl Query {
     pub fn append_param<K, V>(&mut self, key: K, value: V)
     where
         K: Into<String>,
-        V: Into<String>,
-    {
+        V: Into<String>, {
         self.params.push((key.into(), value.into()));
     }
 
@@ -113,9 +109,7 @@ impl Query {
 
 /// Specifies that a request first needs to be authenticated before becoming a valid request.
 pub trait NeedsAuthentication<C>: Serialize + Sized + fmt::Debug
-where
-    C: fmt::Debug,
-{
+where C: fmt::Debug {
     fn authenticate(self, credential: C) -> PrivateRequest<Self, C> {
         PrivateRequest {
             credential,
@@ -129,8 +123,7 @@ where
 pub struct PrivateRequest<R, C>
 where
     R: Serialize + fmt::Debug,
-    C: fmt::Debug,
-{
+    C: fmt::Debug, {
     pub request: R,
     pub credential: C,
 }
@@ -298,9 +291,11 @@ pub struct HttpRequest<'a> {
 impl<'a> HttpRequest<'a> {
     pub fn url(&self) -> Result<Url, url::ParseError> {
         match self.query {
-            Some(query) => Url::parse(self.host)?
-                .join(self.path)?
-                .join(format!("?{}", query.to_string()).as_str()),
+            Some(query) => {
+                Url::parse(self.host)?
+                    .join(self.path)?
+                    .join(format!("?{}", query.to_string()).as_str())
+            }
             None => Url::parse(self.host)?.join(self.path),
         }
     }
@@ -365,17 +360,13 @@ impl HttpClient for reqwest::Client {
 }
 
 pub struct TungsteniteClient<R>
-where
-    R: WebsocketResource,
-{
+where R: WebsocketResource {
     pub client: tungstenite::protocol::WebSocket<tungstenite::client::AutoStream>,
     pub _resource: ::std::marker::PhantomData<R>,
 }
 
 pub trait WebsocketClient<R>: Sized
-where
-    R: WebsocketResource,
-{
+where R: WebsocketResource {
     type Error;
 
     fn connect(url: Url, request: R) -> Result<Self, Self::Error>;
@@ -384,8 +375,7 @@ where
 }
 
 impl<R> WebsocketClient<R> for TungsteniteClient<R>
-where
-    R: WebsocketResource,
+where R: WebsocketResource
 {
     type Error = tungstenite::error::Error;
 
