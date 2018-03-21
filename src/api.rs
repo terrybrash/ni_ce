@@ -107,27 +107,6 @@ impl Query {
     }
 }
 
-/// Specifies that a request first needs to be authenticated before becoming a valid request.
-pub trait NeedsAuthentication<C>: Serialize + Sized + fmt::Debug
-where C: fmt::Debug {
-    fn authenticate(self, credential: C) -> PrivateRequest<Self, C> {
-        PrivateRequest {
-            credential,
-            request: self,
-        }
-    }
-}
-
-/// Wrapper for requests that require authentication.
-#[derive(Debug)]
-pub struct PrivateRequest<R, C>
-where
-    R: Serialize + fmt::Debug,
-    C: fmt::Debug, {
-    pub request: R,
-    pub credential: C,
-}
-
 #[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum Method {
     Get,
@@ -157,28 +136,6 @@ impl fmt::Display for Method {
             Method::Extension(ref method) => write!(f, "{}", method),
         }
     }
-}
-
-pub trait RestResource {
-    type Response;
-
-    fn method(&self) -> Method;
-
-    fn path(&self) -> String;
-
-    fn query(&self) -> Query {
-        Query::default()
-    }
-
-    fn headers(&self) -> Result<Headers, Error> {
-        Ok(Headers::new())
-    }
-
-    fn body(&self) -> Result<Option<Payload>, Error> {
-        Ok(None)
-    }
-
-    fn deserialize(&self, response: &HttpResponse) -> Result<Self::Response, Error>;
 }
 
 pub trait WebsocketResource: fmt::Debug {
@@ -284,7 +241,7 @@ pub struct HttpRequest<'a> {
     pub path: &'a str,
     pub host: &'a str,
     pub headers: Option<Headers>,
-    pub body: Option<Payload>,
+    pub body: Option<&'a str>,
     pub query: Option<&'a str>,
 }
 
@@ -342,14 +299,8 @@ impl HttpClient for reqwest::Client {
             request_builder.headers(reqwest_headers);
         }
 
-        match request.body {
-            Some(Payload::Text(ref body)) => {
-                request_builder.body(body.clone());
-            }
-            Some(Payload::Binary(ref body)) => {
-                request_builder.body(body.clone());
-            }
-            None => {}
+        if let Some(body) = request.body {
+            request_builder.body(body.to_owned());
         }
 
         let request = request_builder.build()?;
