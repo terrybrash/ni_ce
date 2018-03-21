@@ -93,7 +93,6 @@ pub struct Ticker {
     pub updated: u64,
 }
 
-
 /// Market depth.
 #[derive(Debug, PartialEq, PartialOrd, Clone, Deserialize, Serialize)]
 pub struct Orderbook {
@@ -218,11 +217,6 @@ pub struct Order {
     pub timestamp_created: u64,
 }
 
-#[derive(Deserialize, Serialize)]
-struct ErrorResponse {
-    pub success: i64,
-    pub error: String,
-}
 
 /// **Public**. Mostly contains product info (min/max price, precision, fees, etc.)
 pub fn get_exchange_info<Client>(client: &mut Client, host: &str) -> Result<ExchangeInfo, Error>
@@ -238,7 +232,7 @@ where Client: HttpClient {
 
     let http_response = client.send(&http_request)?;
 
-    deserialize_public_response(&http_response)
+    deserialize_response(&http_response)
 }
 
 /// **Private**. User account information (balances, api priviliges, and more)
@@ -266,7 +260,7 @@ where
         query: None,
     };
     let http_response = client.send(&http_request)?;
-    deserialize_private_response(&http_response)
+    deserialize_response(&http_response)
 }
 
 /// **Public**. Market depth.
@@ -291,12 +285,18 @@ where
 
     let http_response = client.send(&http_request)?;
 
-    deserialize_public_response(&http_response)
+    deserialize_response(&http_response)
 }
 
 /// **Public**. Current price/volume ticker.
-pub fn get_ticker<Client>(client: &mut Client, host: &str, products: &[CurrencyPair]) -> Result<HashMap<CurrencyPair, Ticker>, Error>
-where Client: HttpClient {
+pub fn get_ticker<Client>(
+    client: &mut Client,
+    host: &str,
+    products: &[CurrencyPair],
+) -> Result<HashMap<CurrencyPair, Ticker>, Error>
+where
+    Client: HttpClient,
+{
     let products: Vec<String> = products.iter().map(ToString::to_string).collect();
     let path = ["/api/3/ticker/", products.join("-").as_str()].concat();
     let http_request = HttpRequest {
@@ -310,7 +310,7 @@ where Client: HttpClient {
 
     let http_response = client.send(&http_request)?;
 
-    deserialize_public_response(&http_response)
+    deserialize_response(&http_response)
 }
 
 /// **Private**. Place a limit order -- the only order type Liqui supports.
@@ -348,7 +348,7 @@ where
 
     let http_response = client.send(&http_request)?;
 
-    deserialize_private_response(&http_response)
+    deserialize_response(&http_response)
 }
 
 /// **Private**. User's active buy/sell orders for a product.
@@ -380,12 +380,19 @@ where
 
     let http_response = client.send(&http_request)?;
 
-    deserialize_private_response(&http_response)
+    deserialize_response(&http_response)
 }
 
 /// **Private**. Get a specific order by its Liqui-issued order id.
-pub fn get_order<Client>(client: &mut Client, host: &str, credential: &Credential, order_id: u64) -> Result<Order, Error>
-where Client: HttpClient {
+pub fn get_order<Client>(
+    client: &mut Client,
+    host: &str,
+    credential: &Credential,
+    order_id: u64,
+) -> Result<Order, Error>
+where
+    Client: HttpClient,
+{
     let body = {
         let mut query = Query::with_capacity(3);
         query.append_param("method", "OrderInfo");
@@ -405,12 +412,19 @@ where Client: HttpClient {
 
     let http_response = client.send(&http_request)?;
 
-    deserialize_private_response(&http_response)
+    deserialize_response(&http_response)
 }
 
 /// **Private**. Cancel an order by its Liqui-issued order id.
-pub fn cancel_order<Client>(client: &mut Client, host: &str, credential: &Credential, order_id: u64) -> Result<OrderCancellation, Error>
-where Client: HttpClient {
+pub fn cancel_order<Client>(
+    client: &mut Client,
+    host: &str,
+    credential: &Credential,
+    order_id: u64,
+) -> Result<OrderCancellation, Error>
+where
+    Client: HttpClient,
+{
     let body = {
         let mut query = Query::with_capacity(3);
         query.append_param("method", "CancelOrder");
@@ -427,14 +441,14 @@ where Client: HttpClient {
         headers: Some(headers),
         query: None,
     };
-    
+
     let http_response = client.send(&http_request)?;
 
-    deserialize_private_response(&http_response)
+    deserialize_response(&http_response)
 }
 
 #[derive(Debug, Hash, PartialEq, PartialOrd, Eq, Ord, Clone, Deserialize, Serialize)]
-struct PrivateResponse<T> {
+struct LiquiResponse<T> {
     success: i32,
     #[serde(rename = "return")]
     ok: Option<T>,
@@ -442,8 +456,35 @@ struct PrivateResponse<T> {
     code: Option<u32>,
 }
 
+impl<T> LiquiResponse<T> {
+    pub fn is_ok(&self) -> bool {
+        self.success == 1
+    }
+
+    pub fn into_result(self) -> Result<T, LiquiError> {
+        if self.is_ok() {
+            Ok(self.ok.unwrap())
+        } else {
+            let error = match self.code {
+                Some(code @ 803) | Some(code @ 804) | Some(code @ 805) | Some(code @ 806)
+                | Some(code @ 807) => LiquiError::InvalidOrder(code, self.error.unwrap()),
+
+                Some(code @ 831) | Some(code @ 832) => {
+                    LiquiError::InsufficientFunds(code, self.error.unwrap())
+                }
+
+                Some(code @ 833) => LiquiError::OrderNotFound(code, self.error.unwrap()),
+
+                code => LiquiError::Unregistered(code, self.error.unwrap()),
+            };
+
+            Err(error)
+        }
+    }
+}
+
 #[derive(Debug, Fail)]
-enum PrivateError {
+enum LiquiError {
     #[fail(display = "({}) {}", _0, _1)]
     InvalidOrder(u32, String),
 
@@ -457,31 +498,25 @@ enum PrivateError {
     Unregistered(Option<u32>, String),
 }
 
-impl<T> PrivateResponse<T> {
-    pub fn is_ok(&self) -> bool {
-        self.success == 1
-    }
-
-    pub fn into_result(self) -> Result<T, PrivateError> {
-        if self.is_ok() {
-            Ok(self.ok.unwrap())
-        } else {
-            let error = match self.code {
-                Some(code @ 803) | Some(code @ 804) | Some(code @ 805) | Some(code @ 806)
-                | Some(code @ 807) => PrivateError::InvalidOrder(code, self.error.unwrap()),
-
-                Some(code @ 831) | Some(code @ 832) => {
-                    PrivateError::InsufficientFunds(code, self.error.unwrap())
-                }
-
-                Some(code @ 833) => PrivateError::OrderNotFound(code, self.error.unwrap()),
-
-                code => PrivateError::Unregistered(code, self.error.unwrap()),
-            };
-
-            Err(error)
+fn deserialize_response<T>(response: &HttpResponse) -> Result<T, Error>
+where T: DeserializeOwned {
+    let response = match response.body {
+        Some(Payload::Text(ref body)) => body,
+        Some(Payload::Binary(ref body)) => {
+            return Err(format_err!(
+                "the response body doesn't contain valid utf8 text: {:?}",
+                body
+            ))
         }
-    }
+        None => return Err(err_msg("the body is empty")),
+    };
+
+    let response: LiquiResponse<T> = serde_json::from_str(response)
+        .with_context(|_| format!("failed to deserialize: \"{}\"", response))?;
+
+    response
+        .into_result()
+        .map_err(|e| format_err!("the server returned \"{}\"", e))
 }
 
 fn private_headers(credential: &Credential, body: Option<&str>) -> Result<Headers, Error> {
@@ -497,48 +532,4 @@ fn private_headers(credential: &Credential, body: Option<&str>) -> Result<Header
         Header::new("Sign", signature),
     ];
     Ok(headers)
-}
-
-fn deserialize_private_response<T>(response: &HttpResponse) -> Result<T, Error>
-where T: DeserializeOwned {
-    let response = match response.body {
-        Some(Payload::Text(ref body)) => body,
-        Some(Payload::Binary(ref body)) => {
-            return Err(format_err!(
-                "the response body doesn't contain valid utf8 text: {:?}",
-                body
-            ))
-        }
-        None => return Err(err_msg("the body is empty")),
-    };
-
-    let response: PrivateResponse<T> = serde_json::from_str(response)
-        .with_context(|_| format!("failed to deserialize: \"{}\"", response))?;
-
-    response
-        .into_result()
-        .map_err(|e| format_err!("the server returned \"{}\"", e))
-}
-
-fn deserialize_public_response<T>(response: &HttpResponse) -> Result<T, Error>
-where T: DeserializeOwned {
-    let response: serde_json::Value = match response.body {
-        Some(Payload::Text(ref body)) => serde_json::from_str(body)?,
-        Some(Payload::Binary(ref body)) => serde_json::from_slice(body)?,
-        None => return Err(err_msg("body is empty")),
-    };
-
-    let is_success = response
-        .as_object()
-        .and_then(|obj| obj.get("success"))
-        .and_then(|is_success| is_success.as_u64())
-        .map_or(true, |is_success| is_success == 1);
-
-    if is_success {
-        let response: T = serde_json::from_value(response)?;
-        Ok(response)
-    } else {
-        let response: ErrorResponse = serde_json::from_value(response)?;
-        Err(format_err!("The server returned: {}", response.error))
-    }
 }
