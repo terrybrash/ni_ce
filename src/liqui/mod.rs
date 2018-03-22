@@ -1,5 +1,9 @@
+//! [Liqui.io](https://liqui.io/) API.
+//!
+//! [Liqui's API documentation](https://liqui.io/api)
+//!
+//! Naming between `ccex::liqui` and Liqui is not 1:1.
 use api::{Header, Headers, HttpClient, HttpRequest, HttpResponse, Method, Payload, Query};
-use chrono::Utc;
 use failure::{err_msg, Error, ResultExt};
 use hex;
 use hmac::{Hmac, Mac};
@@ -9,7 +13,6 @@ use serde_json;
 use sha2::Sha512;
 use std::collections::HashMap;
 use std::fmt::{self, Display, Formatter};
-use url::Url;
 
 /// Credentials needed for private API requests.
 #[derive(Debug, Hash, PartialEq, PartialOrd, Eq, Ord, Clone, Deserialize, Serialize)]
@@ -36,8 +39,18 @@ impl Display for Side {
     }
 }
 
+/// Single currency. Examples include: *ETH*, *BTC*, and *USDT*.
 #[derive(Debug, Hash, PartialEq, PartialOrd, Eq, Ord, Clone, Deserialize, Serialize)]
-pub struct Currency(pub String);
+pub struct Currency(String);
+
+impl Currency {
+    /// Internally, `Currency` is just a [`String`]. But, Liqui is case-sensitive and uses
+    /// lower-case strings for currencies. `from_str` will create a new `Currency` and ensure the
+    /// characters are lowercase.
+    pub fn from_str(string: &str) -> Self {
+        Currency(string.to_lowercase())
+    }
+}
 
 impl Display for Currency {
     fn fmt(&self, f: &mut Formatter) -> Result<(), fmt::Error> {
@@ -46,13 +59,25 @@ impl Display for Currency {
     }
 }
 
+/// Usually represents a product. Examples include: *ETH_BTC* and *BTC_USDT*.
 #[derive(Debug, Hash, PartialEq, PartialOrd, Eq, Ord, Clone, Serialize)]
 pub struct CurrencyPair(pub Currency, pub Currency);
 
+impl CurrencyPair {
+    pub fn base(&self) -> &Currency {
+        let &CurrencyPair(ref base, _) = self;
+        base
+    }
+
+    pub fn quote(&self) -> &Currency {
+        let &CurrencyPair(_, ref quote) = self;
+        quote
+    }
+}
+
 impl Display for CurrencyPair {
     fn fmt(&self, f: &mut Formatter) -> Result<(), fmt::Error> {
-        let &CurrencyPair(ref base, ref quote) = self;
-        write!(f, "{}_{}", base, quote)
+        write!(f, "{}_{}", self.base(), self.quote())
     }
 }
 
@@ -69,9 +94,9 @@ impl<'de> Deserialize<'de> for CurrencyPair {
 
             fn visit_str<E>(self, pair: &str) -> Result<Self::Value, E>
             where E: de::Error {
-                let currencies: Vec<&str> = pair.split("_").collect();
-                let base = Currency(currencies[0].to_uppercase());
-                let quote = Currency(currencies[1].to_uppercase());
+                let currencies: Vec<&str> = pair.split('_').collect();
+                let base = Currency::from_str(currencies[0]);
+                let quote = Currency::from_str(currencies[1]);
                 Ok(CurrencyPair(base, quote))
             }
         }
@@ -217,13 +242,12 @@ pub struct Order {
     pub timestamp_created: u64,
 }
 
-
 /// **Public**. Mostly contains product info (min/max price, precision, fees, etc.)
 pub fn get_exchange_info<Client>(client: &mut Client, host: &str) -> Result<ExchangeInfo, Error>
 where Client: HttpClient {
     let http_request = HttpRequest {
         method: Method::Get,
-        host: host,
+        host,
         path: "/api/3/info",
         body: None,
         query: None,
@@ -232,7 +256,7 @@ where Client: HttpClient {
 
     let http_response = client.send(&http_request)?;
 
-    deserialize_response(&http_response)
+    deserialize_public_response(&http_response)
 }
 
 /// **Private**. User account information (balances, api priviliges, and more)
@@ -253,14 +277,14 @@ where
     let headers = private_headers(credential, Some(&query))?;
     let http_request = HttpRequest {
         method: Method::Post,
-        host: host,
+        host,
         path: "/tapi",
         body: Some(query.as_str()),
         headers: Some(headers),
         query: None,
     };
     let http_response = client.send(&http_request)?;
-    deserialize_response(&http_response)
+    deserialize_private_response(&http_response)
 }
 
 /// **Public**. Market depth.
@@ -276,7 +300,7 @@ where
     let path = ["/api/3/depth/", products.join("-").as_str()].concat();
     let http_request = HttpRequest {
         method: Method::Get,
-        host: host,
+        host,
         path: path.as_str(),
         headers: None,
         body: None,
@@ -285,7 +309,7 @@ where
 
     let http_response = client.send(&http_request)?;
 
-    deserialize_response(&http_response)
+    deserialize_public_response(&http_response)
 }
 
 /// **Public**. Current price/volume ticker.
@@ -301,7 +325,7 @@ where
     let path = ["/api/3/ticker/", products.join("-").as_str()].concat();
     let http_request = HttpRequest {
         method: Method::Get,
-        host: host,
+        host,
         path: path.as_str(),
         headers: None,
         body: None,
@@ -310,7 +334,7 @@ where
 
     let http_response = client.send(&http_request)?;
 
-    deserialize_response(&http_response)
+    deserialize_public_response(&http_response)
 }
 
 /// **Private**. Place a limit order -- the only order type Liqui supports.
@@ -318,7 +342,7 @@ pub fn place_limit_order<Client>(
     client: &mut Client,
     host: &str,
     credential: &Credential,
-    product: CurrencyPair,
+    product: &CurrencyPair,
     price: d128,
     quantity: d128,
     side: Side,
@@ -339,7 +363,7 @@ where
     let headers = private_headers(credential, Some(body.as_str()))?;
     let http_request = HttpRequest {
         method: Method::Post,
-        host: host,
+        host,
         path: "/tapi",
         body: Some(body.as_str()),
         headers: Some(headers),
@@ -348,7 +372,7 @@ where
 
     let http_response = client.send(&http_request)?;
 
-    deserialize_response(&http_response)
+    deserialize_private_response(&http_response)
 }
 
 /// **Private**. User's active buy/sell orders for a product.
@@ -356,7 +380,7 @@ pub fn get_active_orders<Client>(
     client: &mut Client,
     host: &str,
     credential: &Credential,
-    product: CurrencyPair,
+    product: &CurrencyPair,
 ) -> Result<HashMap<u64, Order>, Error>
 where
     Client: HttpClient,
@@ -371,7 +395,7 @@ where
     let headers = private_headers(credential, Some(body.as_str()))?;
     let http_request = HttpRequest {
         method: Method::Post,
-        host: host,
+        host,
         path: "/tapi",
         body: Some(body.as_str()),
         headers: Some(headers),
@@ -380,7 +404,7 @@ where
 
     let http_response = client.send(&http_request)?;
 
-    deserialize_response(&http_response)
+    deserialize_private_response(&http_response)
 }
 
 /// **Private**. Get a specific order by its Liqui-issued order id.
@@ -403,7 +427,7 @@ where
     let headers = private_headers(credential, Some(body.as_str()))?;
     let http_request = HttpRequest {
         method: Method::Post,
-        host: host,
+        host,
         path: "/tapi",
         body: Some(body.as_str()),
         headers: Some(headers),
@@ -412,7 +436,7 @@ where
 
     let http_response = client.send(&http_request)?;
 
-    deserialize_response(&http_response)
+    deserialize_private_response(&http_response)
 }
 
 /// **Private**. Cancel an order by its Liqui-issued order id.
@@ -435,7 +459,7 @@ where
     let headers = private_headers(credential, Some(body.as_str()))?;
     let http_request = HttpRequest {
         method: Method::Post,
-        host: host,
+        host,
         path: "/tapi",
         body: Some(body.as_str()),
         headers: Some(headers),
@@ -444,7 +468,7 @@ where
 
     let http_response = client.send(&http_request)?;
 
-    deserialize_response(&http_response)
+    deserialize_private_response(&http_response)
 }
 
 #[derive(Debug, Hash, PartialEq, PartialOrd, Eq, Ord, Clone, Deserialize, Serialize)]
@@ -498,7 +522,8 @@ enum LiquiError {
     Unregistered(Option<u32>, String),
 }
 
-fn deserialize_response<T>(response: &HttpResponse) -> Result<T, Error>
+/// Deserialize a response from a *private* REST request.
+fn deserialize_private_response<T>(response: &HttpResponse) -> Result<T, Error>
 where T: DeserializeOwned {
     let response = match response.body {
         Some(Payload::Text(ref body)) => body,
@@ -517,6 +542,25 @@ where T: DeserializeOwned {
     response
         .into_result()
         .map_err(|e| format_err!("the server returned \"{}\"", e))
+}
+
+/// Deserialize a response from a *public* REST request.
+fn deserialize_public_response<T>(response: &HttpResponse) -> Result<T, Error>
+where T: DeserializeOwned {
+    let response = match response.body {
+        Some(Payload::Text(ref body)) => body,
+        Some(Payload::Binary(ref body)) => {
+            return Err(format_err!(
+                "the response body doesn't contain valid utf8 text: {:?}",
+                body
+            ))
+        }
+        None => return Err(err_msg("the body is empty")),
+    };
+
+    let response = serde_json::from_str(response)
+        .with_context(|_| format!("failed to deserialize: \"{}\"", response))?;
+    Ok(response)
 }
 
 fn private_headers(credential: &Credential, body: Option<&str>) -> Result<Headers, Error> {

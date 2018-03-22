@@ -3,7 +3,6 @@ use url::{self, Url};
 use failure::Error;
 use base64;
 use std::fmt::{self, Display, Formatter};
-use serde::ser::Serialize;
 use status::StatusCode;
 
 use reqwest;
@@ -272,7 +271,7 @@ impl<'a> Display for HttpRequest<'a> {
             }
         }
 
-        if let Some(ref body) = self.body {
+        if let Some(body) = self.body {
             writeln!(f, "Body: {}", body)?;
         }
 
