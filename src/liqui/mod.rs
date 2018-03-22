@@ -295,7 +295,7 @@ where
 pub fn get_orderbooks<Client>(
     client: &mut Client,
     host: &str,
-    products: &[CurrencyPair],
+    products: &[&CurrencyPair],
 ) -> Result<HashMap<CurrencyPair, Orderbook>, Error>
 where
     Client: HttpClient,
