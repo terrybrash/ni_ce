@@ -14,6 +14,8 @@ use sha2::Sha512;
 use std::collections::HashMap;
 use std::fmt::{self, Display, Formatter};
 
+pub const API_HOST: &'static str = "https://api.liqui.io";
+
 /// Credentials needed for private API requests.
 #[derive(Debug, Hash, PartialEq, PartialOrd, Eq, Ord, Clone, Deserialize, Serialize)]
 pub struct Credential {
@@ -64,11 +66,13 @@ impl Display for Currency {
 pub struct CurrencyPair(pub Currency, pub Currency);
 
 impl CurrencyPair {
+    /// Convenience method for accessing the base currency.
     pub fn base(&self) -> &Currency {
         let &CurrencyPair(ref base, _) = self;
         base
     }
 
+    /// Convenience method for accessing the quote currency.
     pub fn quote(&self) -> &Currency {
         let &CurrencyPair(_, ref quote) = self;
         quote

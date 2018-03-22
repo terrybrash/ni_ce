@@ -10,6 +10,8 @@ use serde::de::DeserializeOwned;
 use sha2::Sha256;
 use std::fmt::{self, Display, Formatter};
 
+pub const API_HOST: &'static str = "https://api.binance.com";
+
 /// API key and secret. Required for private API calls.
 #[derive(Debug, Serialize, Deserialize, PartialEq, Eq, PartialOrd, Ord, Hash, Clone)]
 pub struct Credential {
@@ -165,12 +167,12 @@ pub struct Balance {
 #[derive(Debug, Serialize, Deserialize, PartialEq, Eq, PartialOrd, Ord, Hash, Clone)]
 #[serde(rename_all = "camelCase")]
 pub struct Orderbook {
-    last_update_id: u64,
+    pub last_update_id: u64,
     /// Vector of `(price, quantity, /*ignore this*/)`
-    asks: Vec<(d128, d128, [(); 0])>,
+    pub asks: Vec<(d128, d128, [(); 0])>,
 
     /// Vector of `(price, quantity, /*ignore this*/)`
-    bids: Vec<(d128, d128, [(); 0])>,
+    pub bids: Vec<(d128, d128, [(); 0])>,
 }
 
 #[derive(Debug, Serialize, Deserialize, PartialEq, Eq, PartialOrd, Ord, Hash, Clone)]
@@ -224,8 +226,15 @@ impl Display for TimeInForce {
     }
 }
 
+/// A single currency. Examples include: *ETH*, *BTC*, and *USDT*.
 #[derive(Debug, Serialize, Deserialize, PartialEq, Eq, PartialOrd, Ord, Hash, Clone)]
-pub struct Currency(pub String);
+pub struct Currency(String);
+
+impl Currency {
+    pub fn from_str(string: &str) -> Self {
+        Currency(string.to_uppercase())
+    }
+}
 
 impl Display for Currency {
     fn fmt(&self, f: &mut Formatter) -> Result<(), fmt::Error> {
