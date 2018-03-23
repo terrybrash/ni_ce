@@ -6,7 +6,6 @@ use std::fmt::{self, Display, Formatter};
 use status::StatusCode;
 
 use reqwest;
-use tungstenite;
 
 pub type Headers = Vec<Header>;
 
@@ -135,30 +134,6 @@ impl fmt::Display for Method {
             Method::Extension(ref method) => write!(f, "{}", method),
         }
     }
-}
-
-pub trait WebsocketResource: fmt::Debug {
-    type Message: fmt::Debug;
-    type Error: fmt::Debug;
-
-    fn method(&self) -> Method;
-
-    fn path(&self) -> String;
-
-    fn headers(&self) -> Headers {
-        Headers::new()
-    }
-
-    fn serialize(message: Self::Message) -> Result<WebsocketMessage, Self::Error>;
-
-    fn deserialize(message: WebsocketMessage) -> Result<Self::Message, Self::Error>;
-}
-
-pub enum WebsocketMessage {
-    Text(String),
-    Binary(Vec<u8>),
-    Ping(Vec<u8>),
-    Pong(Vec<u8>),
 }
 
 pub trait HttpClient {
@@ -301,85 +276,5 @@ impl HttpClient for reqwest::Client {
         let response = self.execute(request)?.into();
 
         Ok(response)
-    }
-}
-
-pub struct TungsteniteClient<R>
-where R: WebsocketResource {
-    pub client: tungstenite::protocol::WebSocket<tungstenite::client::AutoStream>,
-    pub _resource: ::std::marker::PhantomData<R>,
-}
-
-pub trait WebsocketClient<R>: Sized
-where R: WebsocketResource {
-    type Error;
-
-    fn connect(url: Url, request: R) -> Result<Self, Self::Error>;
-    fn recv(&mut self) -> Result<R::Message, Self::Error>;
-    fn send(&mut self, message: R::Message) -> Result<(), Self::Error>;
-}
-
-impl<R> WebsocketClient<R> for TungsteniteClient<R>
-where R: WebsocketResource
-{
-    type Error = tungstenite::error::Error;
-
-    fn connect(url: Url, _request: R) -> Result<Self, tungstenite::error::Error> {
-        use tungstenite::handshake::client::Request;
-
-        let tungstenite_request = Request::from(url);
-        // for header in request.headers() {
-        //     match header.value {
-        //         HeaderValue::String(value) =>
-        //         tungstenite_request.add_header(Cow::from(header.name), Cow::from(value)),
-        //         HeaderValue::Bytes(value) =>
-        //         tungstenite_request.add_header(Cow::from(header.name), Cow::from(value)),
-        //     }
-        // }
-
-        let (client, response) = tungstenite::connect(tungstenite_request).unwrap();
-        if response.code != 101 {
-            panic!(
-                "[tungstenite] server returned {}: {:?}",
-                response.code, response.headers
-            );
-        }
-
-        Ok(TungsteniteClient {
-            client,
-            _resource: ::std::marker::PhantomData::default(),
-        })
-    }
-
-    fn recv(&mut self) -> Result<R::Message, Self::Error> {
-        let message = self.client.read_message()?;
-        Ok(R::deserialize(message.into()).unwrap())
-    }
-
-    fn send(&mut self, message: R::Message) -> Result<(), Self::Error> {
-        let message = R::serialize(message).unwrap();
-        self.client.write_message(message.into())
-    }
-}
-
-impl From<tungstenite::protocol::Message> for WebsocketMessage {
-    fn from(message: tungstenite::protocol::Message) -> Self {
-        match message {
-            tungstenite::protocol::Message::Text(text) => WebsocketMessage::Text(text),
-            tungstenite::protocol::Message::Binary(bytes) => WebsocketMessage::Binary(bytes),
-            tungstenite::protocol::Message::Ping(bytes) => WebsocketMessage::Ping(bytes),
-            tungstenite::protocol::Message::Pong(bytes) => WebsocketMessage::Pong(bytes),
-        }
-    }
-}
-
-impl From<WebsocketMessage> for tungstenite::protocol::Message {
-    fn from(message: WebsocketMessage) -> Self {
-        match message {
-            WebsocketMessage::Text(text) => tungstenite::protocol::Message::Text(text),
-            WebsocketMessage::Binary(bytes) => tungstenite::protocol::Message::Binary(bytes),
-            WebsocketMessage::Ping(bytes) => tungstenite::protocol::Message::Ping(bytes),
-            WebsocketMessage::Pong(bytes) => tungstenite::protocol::Message::Pong(bytes),
-        }
     }
 }
