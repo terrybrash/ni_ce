@@ -21,8 +21,8 @@ extern crate url;
 pub mod api;
 // pub mod future;
 
-// pub mod exmo;
 pub mod liqui;
 pub mod binance;
+// pub mod exmo;
 // pub mod gemini;
 // pub mod hitbtc;

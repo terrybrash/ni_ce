@@ -15,6 +15,7 @@ use std::collections::HashMap;
 use std::fmt::{self, Display, Formatter};
 use http;
 
+/// Use this as the `host` for REST requests.
 pub const API_HOST: &str = "https://api.liqui.io";
 
 /// Credentials needed for private API requests.
