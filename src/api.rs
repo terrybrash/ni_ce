@@ -161,8 +161,7 @@ pub enum WebsocketMessage {
     Pong(Vec<u8>),
 }
 
-pub trait HttpClient: 'static + Clone + Send + Sized + fmt::Debug {
-    fn new() -> Self;
+pub trait HttpClient {
     fn send(&mut self, request: &HttpRequest) -> Result<HttpResponse, Error>;
 }
 
@@ -280,10 +279,6 @@ impl<'a> Display for HttpRequest<'a> {
 }
 
 impl HttpClient for reqwest::Client {
-    fn new() -> Self {
-        reqwest::Client::new()
-    }
-
     fn send(&mut self, request: &HttpRequest) -> Result<HttpResponse, Error> {
         let mut request_builder = self.request(
             request.method.clone().into(),
