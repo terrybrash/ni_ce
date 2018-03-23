@@ -2,8 +2,8 @@ use failure::Error;
 use http;
 use reqwest;
 
-#[derive(Debug, Default, Clone, Serialize, Deserialize)]
-pub struct Query {
+#[derive(Debug, Default, Clone)]
+pub(crate) struct Query {
     pub params: Vec<(String, String)>,
 }
 
