@@ -1,5 +1,5 @@
 //! [Binance.com](https://binance.com) API.
-use api::{Header, Headers, HttpClient, HttpRequest, HttpResponse, Method, Payload, Query};
+use api::{HttpClient, Query};
 use chrono::Utc;
 use failure::Error;
 use hex;
@@ -9,8 +9,9 @@ use rust_decimal::Decimal as d128;
 use serde::de::DeserializeOwned;
 use sha2::Sha256;
 use std::fmt::{self, Display, Formatter};
+use http;
 
-pub const API_HOST: &'static str = "https://api.binance.com";
+pub const API_HOST: &str = "https://api.binance.com";
 
 /// API key and secret. Required for private API calls.
 #[derive(Debug, Serialize, Deserialize, PartialEq, Eq, PartialOrd, Ord, Hash, Clone)]
@@ -155,7 +156,7 @@ pub struct Account {
 pub struct Balance {
     #[serde(rename = "asset")]
     pub currency: Currency,
-    
+
     /// Available for trading.
     pub free: d128,
 
@@ -283,15 +284,11 @@ where
         query.append_param("signature", signature);
         query.to_string()
     };
-    let headers = private_headers(credential);
-    let http_request = HttpRequest {
-        method: Method::Get,
-        host,
-        path: "/api/v3/account",
-        query: Some(query.as_str()),
-        headers: Some(headers),
-        body: None,
-    };
+    let http_request = http::request::Builder::new()
+        .method(http::Method::GET)
+        .uri(format!("{}/api/v3/account?{}", host, query))
+        .header(X_MBX_APIKEY, credential.key.as_str())
+        .body(String::new())?;
 
     let http_response = client.send(&http_request)?;
 
@@ -301,14 +298,10 @@ where
 /// **Public**.
 pub fn get_exchange_info<Client>(client: &mut Client, host: &str) -> Result<ExchangeInfo, Error>
 where Client: HttpClient {
-    let http_request = HttpRequest {
-        method: Method::Get,
-        host,
-        path: "/api/v1/exchangeInfo",
-        query: None,
-        body: None,
-        headers: None,
-    };
+    let http_request = http::request::Builder::new()
+        .method(http::Method::GET)
+        .uri(format!("{}/api/v1/exchangeInfo", host))
+        .body(String::new())?;
 
     let http_response = client.send(&http_request)?;
 
@@ -330,14 +323,10 @@ where
         query.append_param("limit", "100");
         query.to_string()
     };
-    let http_request = HttpRequest {
-        method: Method::Get,
-        host,
-        path: "/api/v1/depth",
-        query: Some(query.as_str()),
-        body: None,
-        headers: None,
-    };
+    let http_request = http::request::Builder::new()
+        .method(http::Method::GET)
+        .uri(format!("{}/api/v1/depth?{}", host, query))
+        .body(String::new())?;
 
     let http_response = client.send(&http_request)?;
 
@@ -371,15 +360,11 @@ where
         query.append_param("signature", signature);
         query.to_string()
     };
-    let headers = private_headers(credential);
-    let http_request = HttpRequest {
-        method: Method::Post,
-        host,
-        path: "/api/v3/order",
-        query: Some(query.as_str()),
-        headers: Some(headers),
-        body: None,
-    };
+    let http_request = http::request::Builder::new()
+        .method(http::Method::POST)
+        .uri(format!("{}/api/v3/order?{}", host, query))
+        .header(X_MBX_APIKEY, credential.key.as_str())
+        .body(String::new())?;
 
     let http_response = client.send(&http_request)?;
 
@@ -406,15 +391,11 @@ where
         query.append_param("signature", signature);
         query.to_string()
     };
-    let headers = private_headers(credential);
-    let http_request = HttpRequest {
-        method: Method::Delete,
-        host,
-        path: "/api/v3/order",
-        query: Some(query.as_str()),
-        body: None,
-        headers: Some(headers),
-    };
+    let http_request = http::request::Builder::new()
+        .method(http::Method::DELETE)
+        .uri(format!("{}/api/v3/order?{}", host, query))
+        .header(X_MBX_APIKEY, credential.key.as_str())
+        .body(String::new())?;
 
     let http_response = client.send(&http_request)?;
 
@@ -441,15 +422,11 @@ where
         query.append_param("signature", signature);
         query.to_string()
     };
-    let headers = private_headers(credential);
-    let http_request = HttpRequest {
-        method: Method::Get,
-        host,
-        path: "/api/v3/openOrders",
-        query: Some(query.as_str()),
-        headers: Some(headers),
-        body: None,
-    };
+    let http_request = http::request::Builder::new()
+        .method(http::Method::GET)
+        .uri(format!("{}/api/v3/openOrders?{}", host, query))
+        .header(X_MBX_APIKEY, credential.key.as_str())
+        .body(String::new())?;
 
     let http_response = client.send(&http_request)?;
 
@@ -469,22 +446,15 @@ fn private_signature(credential: &Credential, query: &str) -> Result<String, Err
     Ok(hex::encode(mac.result().code().to_vec()))
 }
 
-fn private_headers(credential: &Credential) -> Headers {
-    vec![Header::new("X-MBX-APIKEY", credential.key.clone())]
-}
+const X_MBX_APIKEY: &str = "X-MBX-APIKEY";
 
-fn deserialize_private_response<T>(response: &HttpResponse) -> Result<T, Error>
+fn deserialize_private_response<T>(response: &http::Response<String>) -> Result<T, Error>
 where T: DeserializeOwned {
     deserialize_public_response(response)
 }
 
-fn deserialize_public_response<T>(response: &HttpResponse) -> Result<T, Error>
+fn deserialize_public_response<T>(response: &http::Response<String>) -> Result<T, Error>
 where T: DeserializeOwned {
-    let body = match response.body {
-        Some(Payload::Text(ref body)) => body,
-        Some(Payload::Binary(_)) => panic!(),
-        None => panic!(),
-    };
-    let result = serde_json::from_str(body)?;
+    let result = serde_json::from_str(response.body().as_str())?;
     Ok(result)
 }

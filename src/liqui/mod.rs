@@ -3,8 +3,8 @@
 //! [Liqui's API documentation](https://liqui.io/api)
 //!
 //! Naming between `ccex::liqui` and Liqui is not 1:1.
-use api::{Header, Headers, HttpClient, HttpRequest, HttpResponse, Method, Payload, Query};
-use failure::{err_msg, Error, ResultExt};
+use api::{HttpClient, Query};
+use failure::{Error, ResultExt};
 use hex;
 use hmac::{Hmac, Mac};
 use rust_decimal::Decimal as d128;
@@ -13,8 +13,9 @@ use serde_json;
 use sha2::Sha512;
 use std::collections::HashMap;
 use std::fmt::{self, Display, Formatter};
+use http;
 
-pub const API_HOST: &'static str = "https://api.liqui.io";
+pub const API_HOST: &str = "https://api.liqui.io";
 
 /// Credentials needed for private API requests.
 #[derive(Debug, Hash, PartialEq, PartialOrd, Eq, Ord, Clone, Deserialize, Serialize)]
@@ -41,7 +42,7 @@ impl Display for Side {
     }
 }
 
-/// Single currency. Examples include: *ETH*, *BTC*, and *USDT*.
+/// Single currency. Examples include: `ETH`, `BTC`, and `USDT`.
 #[derive(Debug, Hash, PartialEq, PartialOrd, Eq, Ord, Clone, Deserialize, Serialize)]
 pub struct Currency(String);
 
@@ -61,7 +62,7 @@ impl Display for Currency {
     }
 }
 
-/// Usually represents a product. Examples include: *ETH_BTC* and *BTC_USDT*.
+/// Usually represents a product. Examples include: `ETH_BTC` and `BTC_USDT`.
 #[derive(Debug, Hash, PartialEq, PartialOrd, Eq, Ord, Clone, Serialize)]
 pub struct CurrencyPair(pub Currency, pub Currency);
 
@@ -249,14 +250,10 @@ pub struct Order {
 /// **Public**. Mostly contains product info (min/max price, precision, fees, etc.)
 pub fn get_exchange_info<Client>(client: &mut Client, host: &str) -> Result<ExchangeInfo, Error>
 where Client: HttpClient {
-    let http_request = HttpRequest {
-        method: Method::Get,
-        host,
-        path: "/api/3/info",
-        body: None,
-        query: None,
-        headers: None,
-    };
+    let http_request = http::Request::builder()
+        .method(http::Method::GET)
+        .uri(format!("{}/api/3/info", host))
+        .body(String::new())?;
 
     let http_response = client.send(&http_request)?;
 
@@ -278,15 +275,13 @@ where
         query.append_param("nonce", credential.nonce.to_string());
         query.to_string()
     };
-    let headers = private_headers(credential, Some(&query))?;
-    let http_request = HttpRequest {
-        method: Method::Post,
-        host,
-        path: "/tapi",
-        body: Some(query.as_str()),
-        headers: Some(headers),
-        query: None,
-    };
+
+    let mut http_request = http::request::Builder::new()
+        .method(http::Method::POST)
+        .uri(format!("{}/tapi", host))
+        .body(query)?;
+    sign_private_request(credential, &mut http_request)?;
+
     let http_response = client.send(&http_request)?;
     deserialize_private_response(&http_response)
 }
@@ -301,15 +296,10 @@ where
     Client: HttpClient,
 {
     let products: Vec<String> = products.iter().map(ToString::to_string).collect();
-    let path = ["/api/3/depth/", products.join("-").as_str()].concat();
-    let http_request = HttpRequest {
-        method: Method::Get,
-        host,
-        path: path.as_str(),
-        headers: None,
-        body: None,
-        query: None,
-    };
+    let http_request = http::request::Builder::new()
+        .method(http::Method::GET)
+        .uri(format!("{}/api/3/depth/{}", host, products.join("-")))
+        .body(String::new())?;
 
     let http_response = client.send(&http_request)?;
 
@@ -326,15 +316,10 @@ where
     Client: HttpClient,
 {
     let products: Vec<String> = products.iter().map(ToString::to_string).collect();
-    let path = ["/api/3/ticker/", products.join("-").as_str()].concat();
-    let http_request = HttpRequest {
-        method: Method::Get,
-        host,
-        path: path.as_str(),
-        headers: None,
-        body: None,
-        query: None,
-    };
+    let http_request = http::request::Builder::new()
+        .method(http::Method::GET)
+        .uri(format!("{}/api/3/ticker/{}", host, products.join("-")))
+        .body(String::new())?;
 
     let http_response = client.send(&http_request)?;
 
@@ -364,15 +349,11 @@ where
         query.append_param("amount", quantity.to_string());
         query.to_string()
     };
-    let headers = private_headers(credential, Some(body.as_str()))?;
-    let http_request = HttpRequest {
-        method: Method::Post,
-        host,
-        path: "/tapi",
-        body: Some(body.as_str()),
-        headers: Some(headers),
-        query: None,
-    };
+    let mut http_request = http::request::Builder::new()
+        .method(http::Method::POST)
+        .uri(format!("{}/tapi", host))
+        .body(body)?;
+    sign_private_request(credential, &mut http_request)?;
 
     let http_response = client.send(&http_request)?;
 
@@ -396,15 +377,11 @@ where
         query.append_param("pair", product.to_string());
         query.to_string()
     };
-    let headers = private_headers(credential, Some(body.as_str()))?;
-    let http_request = HttpRequest {
-        method: Method::Post,
-        host,
-        path: "/tapi",
-        body: Some(body.as_str()),
-        headers: Some(headers),
-        query: None,
-    };
+    let mut http_request = http::request::Builder::new()
+        .method(http::Method::POST)
+        .uri(format!("{}/tapi", host))
+        .body(body)?;
+    sign_private_request(credential, &mut http_request)?;
 
     let http_response = client.send(&http_request)?;
 
@@ -428,15 +405,11 @@ where
         query.append_param("order_id", order_id.to_string());
         query.to_string()
     };
-    let headers = private_headers(credential, Some(body.as_str()))?;
-    let http_request = HttpRequest {
-        method: Method::Post,
-        host,
-        path: "/tapi",
-        body: Some(body.as_str()),
-        headers: Some(headers),
-        query: None,
-    };
+    let mut http_request = http::request::Builder::new()
+        .method(http::Method::POST)
+        .uri(format!("{}/tapi", host))
+        .body(body)?;
+    sign_private_request(credential, &mut http_request)?;
 
     let http_response = client.send(&http_request)?;
 
@@ -460,15 +433,11 @@ where
         query.append_param("order_id", order_id.to_string());
         query.to_string()
     };
-    let headers = private_headers(credential, Some(body.as_str()))?;
-    let http_request = HttpRequest {
-        method: Method::Post,
-        host,
-        path: "/tapi",
-        body: Some(body.as_str()),
-        headers: Some(headers),
-        query: None,
-    };
+    let mut http_request = http::request::Builder::new()
+        .method(http::Method::POST)
+        .uri(format!("{}/tapi", host))
+        .body(body)?;
+    sign_private_request(credential, &mut http_request)?;
 
     let http_response = client.send(&http_request)?;
 
@@ -527,21 +496,11 @@ enum LiquiError {
 }
 
 /// Deserialize a response from a *private* REST request.
-fn deserialize_private_response<T>(response: &HttpResponse) -> Result<T, Error>
+fn deserialize_private_response<T>(response: &http::Response<String>) -> Result<T, Error>
 where T: DeserializeOwned {
-    let response = match response.body {
-        Some(Payload::Text(ref body)) => body,
-        Some(Payload::Binary(ref body)) => {
-            return Err(format_err!(
-                "the response body doesn't contain valid utf8 text: {:?}",
-                body
-            ))
-        }
-        None => return Err(err_msg("the body is empty")),
-    };
-
-    let response: LiquiResponse<T> = serde_json::from_str(response)
-        .with_context(|_| format!("failed to deserialize: \"{}\"", response))?;
+    let body = response.body();
+    let response: LiquiResponse<T> = serde_json::from_str(body.as_str())
+        .with_context(|_| format!("failed to deserialize: \"{}\"", body))?;
 
     response
         .into_result()
@@ -549,35 +508,42 @@ where T: DeserializeOwned {
 }
 
 /// Deserialize a response from a *public* REST request.
-fn deserialize_public_response<T>(response: &HttpResponse) -> Result<T, Error>
+fn deserialize_public_response<T>(response: &http::Response<String>) -> Result<T, Error>
 where T: DeserializeOwned {
-    let response = match response.body {
-        Some(Payload::Text(ref body)) => body,
-        Some(Payload::Binary(ref body)) => {
-            return Err(format_err!(
-                "the response body doesn't contain valid utf8 text: {:?}",
-                body
-            ))
-        }
-        None => return Err(err_msg("the body is empty")),
-    };
-
-    let response = serde_json::from_str(response)
-        .with_context(|_| format!("failed to deserialize: \"{}\"", response))?;
+    let body = response.body();
+    let response = serde_json::from_str(body.as_str())
+        .with_context(|_| format!("failed to deserialize: \"{}\"", body))?;
     Ok(response)
 }
 
-fn private_headers(credential: &Credential, body: Option<&str>) -> Result<Headers, Error> {
+// fn private_headers(credential: &Credential, body: Option<&str>) -> Result<Headers, Error> {
+//     let mut mac =
+//         Hmac::<Sha512>::new(credential.secret.as_bytes()).map_err(|e| format_err!("{:?}", e))?;
+//     if let Some(body) = body {
+//         mac.input(body.as_bytes());
+//     }
+//     let signature = hex::encode(mac.result().code().to_vec());
+//
+//     let headers = vec![
+//         Header::new("Key", credential.key.clone()),
+//         Header::new("Sign", signature),
+//     ];
+//     Ok(headers)
+// }
+
+fn sign_private_request(
+    credential: &Credential,
+    request: &mut http::Request<String>,
+) -> Result<(), Error>
+{
     let mut mac =
         Hmac::<Sha512>::new(credential.secret.as_bytes()).map_err(|e| format_err!("{:?}", e))?;
-    if let Some(body) = body {
-        mac.input(body.as_bytes());
-    }
+    mac.input(request.body().as_bytes());
     let signature = hex::encode(mac.result().code().to_vec());
 
-    let headers = vec![
-        Header::new("Key", credential.key.clone()),
-        Header::new("Sign", signature),
-    ];
-    Ok(headers)
+    let headers = request.headers_mut();
+    headers.insert("Key", credential.key.parse().unwrap());
+    headers.insert("Sign", signature.parse().unwrap());
+
+    Ok(())
 }

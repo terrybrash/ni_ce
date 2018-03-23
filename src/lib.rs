@@ -11,6 +11,7 @@ extern crate chrono;
 extern crate failure;
 extern crate hex;
 extern crate hmac;
+extern crate http;
 extern crate num_traits;
 extern crate reqwest;
 extern crate rust_decimal;
@@ -20,9 +21,7 @@ extern crate serde_derive;
 extern crate serde_json;
 extern crate sha2;
 extern crate test;
-extern crate tungstenite;
 extern crate url;
-extern crate uuid;
 
 pub mod api;
 // pub mod future;
@@ -33,9 +32,9 @@ pub mod binance;
 // pub mod gemini;
 // pub mod hitbtc;
 
-mod model;
-mod status;
-pub use model::*;
+// mod model;
+// mod status;
+// pub use model::*;
 
 // use failure::Error;
 // use rust_decimal::Decimal as d128;
