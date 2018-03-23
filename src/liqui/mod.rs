@@ -43,7 +43,7 @@ impl Display for Side {
     }
 }
 
-/// Single currency. Examples include: `ETH`, `BTC`, and `USDT`.
+/// Single currency. `ETH`, `BTC`, `USDT`, etc.
 #[derive(Debug, Hash, PartialEq, PartialOrd, Eq, Ord, Clone, Deserialize, Serialize)]
 pub struct Currency(String);
 
@@ -63,18 +63,20 @@ impl Display for Currency {
     }
 }
 
-/// Usually represents a product. Examples include: `ETH_BTC` and `BTC_USDT`.
+/// Usually represents a product. `ETH_BTC`, `BTC_USDT`, etc.
 #[derive(Debug, Hash, PartialEq, PartialOrd, Eq, Ord, Clone, Serialize)]
 pub struct CurrencyPair(pub Currency, pub Currency);
 
 impl CurrencyPair {
-    /// Convenience method for accessing the base currency.
+    /// Convenience method for accessing the base currency when `CurrencyPair` represents a
+    /// product.
     pub fn base(&self) -> &Currency {
         let &CurrencyPair(ref base, _) = self;
         base
     }
 
-    /// Convenience method for accessing the quote currency.
+    /// Convenience method for accessing the quote currency when `CurrencyPair` represents a
+    /// product.
     pub fn quote(&self) -> &Currency {
         let &CurrencyPair(_, ref quote) = self;
         quote

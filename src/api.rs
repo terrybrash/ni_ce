@@ -1,5 +1,6 @@
 use failure::Error;
 use http;
+use reqwest;
 
 #[derive(Debug, Default, Clone, Serialize, Deserialize)]
 pub struct Query {
@@ -39,56 +40,25 @@ pub trait HttpClient {
     fn send(&mut self, request: &http::Request<String>) -> Result<http::Response<String>, Error>;
 }
 
-// impl From<reqwest::Response> for HttpResponse {
-//     fn from(mut response: reqwest::Response) -> Self {
-//         let mut body = Vec::with_capacity(1024);
-//         response.read_to_end(&mut body).unwrap();
-//
-//         let body = if body.is_empty() {
-//             None
-//         } else {
-//             match String::from_utf8(body) {
-//                 Ok(body) => Some(Payload::Text(body)),
-//                 Err(body) => Some(Payload::Binary(body.into_bytes())),
-//             }
-//         };
-//
-//         let headers = response
-//             .headers()
-//             .iter()
-//             .map(|header| Header::new(header.name(), header.value_string()))
-//             .collect();
-//
-//         HttpResponse {
-//             status: StatusCode::try_from(response.status().as_u16()).unwrap(),
-//             headers,
-//             body,
-//         }
-//     }
-// }
+impl HttpClient for reqwest::Client {
+    fn send(&mut self, request: &http::Request<String>) -> Result<http::Response<String>, Error> {
+        let method = request.method().as_str().parse()?;
+        let mut headers = reqwest::header::Headers::new();
+        for (key, value) in request.headers() {
+            headers.set_raw(key.as_str().to_owned(), value.to_str()?);
+        }
 
-// impl HttpClient for reqwest::Client {
-//     fn send(&mut self, request: &http::Request<String>) -> Result<http::Response, Error> {
-//         let mut request_builder = self.request(
-//             request.method.clone().into(),
-//             request.url().map_err(|e| format_err!("{}", e))?,
-//         );
-//
-//         if let Some(ref headers) = request.headers {
-//             let mut reqwest_headers = reqwest::header::Headers::new();
-//             for header in headers {
-//                 reqwest_headers.set_raw(header.name.clone(), header.values.as_slice().join("; "));
-//             }
-//             request_builder.headers(reqwest_headers);
-//         }
-//
-//         if let Some(body) = request.body {
-//             request_builder.body(body.to_owned());
-//         }
-//
-//         let request = request_builder.build()?;
-//         let response = self.execute(request)?.into();
-//
-//         Ok(response)
-//     }
-// }
+        let request = self.request(method, request.uri().to_string().as_str())
+            .body(request.body().clone())
+            .headers(headers)
+            .build()?;
+
+        let mut response = self.execute(request)?;
+
+        // TODO: add headers
+        http::response::Builder::new()
+            .status(response.status().as_u16())
+            .body(response.text()?)
+            .map_err(|e| format_err!("{}", e))
+    }
+}

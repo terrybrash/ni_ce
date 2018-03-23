@@ -228,7 +228,7 @@ impl Display for TimeInForce {
     }
 }
 
-/// A single currency. Examples include: *ETH*, *BTC*, and *USDT*.
+/// A single currency. `ETH`, `BTC`, `USDT`, etc.
 #[derive(Debug, Serialize, Deserialize, PartialEq, Eq, PartialOrd, Ord, Hash, Clone)]
 pub struct Currency(String);
 
@@ -245,18 +245,20 @@ impl Display for Currency {
     }
 }
 
-/// Pair of currencies. Usually represents a product.
+/// Usually represents a product. `ETH_BTC`, `BTC_USDT`, etc.
 #[derive(Debug, Serialize, Deserialize, PartialEq, Eq, PartialOrd, Ord, Hash, Clone)]
 pub struct CurrencyPair(pub Currency, pub Currency);
 
 impl CurrencyPair {
-    /// Convenience method for accessing the base currency.
+    /// Convenience method for accessing the base currency when `CurrencyPair` represents a
+    /// product.
     pub fn base(&self) -> &Currency {
         let &CurrencyPair(ref base, _) = self;
         base
     }
 
-    /// Convenience method for accessing the quote currency.
+    /// Convenience method for accessing the quote currency when `CurrencyPair` represents a
+    /// product.
     pub fn quote(&self) -> &Currency {
         let &CurrencyPair(_, ref quote) = self;
         quote

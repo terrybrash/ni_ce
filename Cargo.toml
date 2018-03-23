@@ -6,7 +6,7 @@ authors = ["Terry Brashaw <terrybrashaw@gmail.com>"]
 [dependencies]
 base64 = "^0.9.0"
 chrono = {version = "^0.4.0", features = ["serde"]}
-failure = {version = "^0.1.1"}
+failure = "^0.1.1"
 hex = "^0.3.1"
 hmac = "^0.5.0"
 http = "^0.1.5"
