@@ -1,6 +1,4 @@
 #![deny(missing_debug_implementations)]
-#![feature(try_from)]
-#![allow(warnings)]
 
 extern crate base64;
 extern crate chrono;

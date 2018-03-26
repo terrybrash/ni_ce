@@ -11,7 +11,7 @@ use sha2::Sha256;
 use std::fmt::{self, Display, Formatter};
 use http;
 
-/// Use this as the `host` for REST requests. 
+/// Use this as the `host` for REST requests.
 pub const API_HOST: &str = "https://api.binance.com";
 
 /// API key and secret. Required for private API calls.

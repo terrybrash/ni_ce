@@ -1,11 +1,10 @@
 [package]
-name = "ccex"
+name = "ni_ce"
 version = "0.1.0"
 license = "MIT"
-documentation = "https://docs.rs/ccex"
-repository = "https://github.com/terrybrashaw/ccex"
-description = "Cryptocurrency exchange REST interfaces."
-rust_decimal = {git = "https://github.com/paupino/rust-decimal"}
+documentation = "https://docs.rs/ni_ce"
+repository = "https://github.com/terrybrashaw/ni_ce"
+description = "A nice cryptocurrency exchange REST interface."
 authors = ["Terry Brashaw <terrybrashaw@gmail.com>"]
 keywords = ["cryptocurrency", "exchange", "trading"]
 categories = ["api-bindings"]
