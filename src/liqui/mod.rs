@@ -3,7 +3,7 @@
 //! [Liqui's API documentation](https://liqui.io/api)
 //!
 //! Naming between `ccex::liqui` and Liqui is not 1:1.
-use api::{HttpClient, Query};
+use {HttpClient, Query};
 use failure::{Error, ResultExt};
 use hex;
 use hmac::{Hmac, Mac};

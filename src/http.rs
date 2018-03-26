@@ -36,6 +36,7 @@ impl Query {
     }
 }
 
+/// A trait for sending HTTP requests. Used by *all* REST API calls.
 pub trait HttpClient {
     fn send(&mut self, request: &http::Request<String>) -> Result<http::Response<String>, Error>;
 }

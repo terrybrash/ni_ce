@@ -1,3 +1,4 @@
+#![deny(missing_debug_implementations)]
 #![feature(try_from)]
 #![allow(warnings)]
 
@@ -18,11 +19,10 @@ extern crate serde_json;
 extern crate sha2;
 extern crate url;
 
-pub mod api;
-// pub mod future;
+#[path = "http.rs"]
+mod _http;
+pub use _http::HttpClient;
+use _http::Query;
 
 pub mod liqui;
 pub mod binance;
-// pub mod exmo;
-// pub mod gemini;
-// pub mod hitbtc;

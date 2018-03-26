@@ -1,7 +1,15 @@
 [package]
 name = "ccex"
 version = "0.1.0"
+license = "MIT"
+documentation = "https://docs.rs/ccex"
+repository = "https://github.com/terrybrashaw/ccex"
+description = "Cryptocurrency exchange REST interfaces."
+rust_decimal = {git = "https://github.com/paupino/rust-decimal"}
 authors = ["Terry Brashaw <terrybrashaw@gmail.com>"]
+keywords = ["cryptocurrency", "exchange", "trading"]
+categories = ["api-bindings"]
+readme = "README.md"
 
 [dependencies]
 base64 = "^0.9.0"
@@ -12,7 +20,7 @@ hmac = "^0.5.0"
 http = "^0.1.5"
 num-traits = "^0.2.2"
 reqwest = "^0.8.5"
-rust_decimal = "^0.7.2"
+rust_decimal = {git = "https://github.com/paupino/rust-decimal"}
 serde = "^1.0.34"
 serde_derive = "^1.0.34"
 serde_json = "^1.0.13"

@@ -1,5 +1,5 @@
 //! [Binance.com](https://binance.com) API.
-use api::{HttpClient, Query};
+use {HttpClient, Query};
 use chrono::Utc;
 use failure::Error;
 use hex;
