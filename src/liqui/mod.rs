@@ -9,6 +9,7 @@ use hex;
 use hmac::{Hmac, Mac};
 use rust_decimal::Decimal as d128;
 use serde::de::{self, Deserialize, DeserializeOwned, Deserializer, Visitor};
+use serde;
 use serde_json;
 use sha2::Sha512;
 use std::collections::HashMap;
@@ -97,12 +98,15 @@ impl<'de> Deserialize<'de> for CurrencyPair {
             type Value = CurrencyPair;
 
             fn expecting(&self, f: &mut fmt::Formatter) -> fmt::Result {
-                f.write_str("currency pair as a string")
+                f.write_str("a string containing two currencies separated by an underscore")
             }
 
             fn visit_str<E>(self, pair: &str) -> Result<Self::Value, E>
             where E: de::Error {
                 let currencies: Vec<&str> = pair.split('_').collect();
+                if currencies.len() < 2 {
+                    return Err(E::invalid_value(serde::de::Unexpected::Str(pair), &self));
+                }
                 let base = Currency::from_str(currencies[0]);
                 let quote = Currency::from_str(currencies[1]);
                 Ok(CurrencyPair(base, quote))
