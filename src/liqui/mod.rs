@@ -15,6 +15,7 @@ use sha2::Sha512;
 use std::collections::HashMap;
 use std::fmt::{self, Display, Formatter};
 use http;
+use std::str::FromStr;
 
 /// Use this as the `host` for REST requests.
 pub const API_HOST: &str = "https://api.liqui.io";
@@ -45,15 +46,19 @@ impl Display for Side {
 }
 
 /// Single currency. `ETH`, `BTC`, `USDT`, etc.
+///
+/// Use `Currency::from_str` to create a new `Currency`.
+///
+/// ```rust
+/// let ether: Currency = "ETH".parse()?;
+/// ```
 #[derive(Debug, Hash, PartialEq, PartialOrd, Eq, Ord, Clone, Deserialize, Serialize)]
 pub struct Currency(String);
 
-impl Currency {
-    /// Internally, `Currency` is just a [`String`]. But, Liqui is case-sensitive and uses
-    /// lower-case strings for currencies. `from_str` will create a new `Currency` and ensure the
-    /// characters are lowercase.
-    pub fn from_str(string: &str) -> Self {
-        Currency(string.to_lowercase())
+impl FromStr for Currency {
+    type Err = Error;
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        Ok(Currency(s.to_lowercase()))
     }
 }
 
@@ -107,8 +112,8 @@ impl<'de> Deserialize<'de> for CurrencyPair {
                 if currencies.len() < 2 {
                     return Err(E::invalid_value(serde::de::Unexpected::Str(pair), &self));
                 }
-                let base = Currency::from_str(currencies[0]);
-                let quote = Currency::from_str(currencies[1]);
+                let base = Currency::from_str(currencies[0]).map_err(serde::de::Error::custom)?;
+                let quote = Currency::from_str(currencies[1]).map_err(serde::de::Error::custom)?;
                 Ok(CurrencyPair(base, quote))
             }
         }
