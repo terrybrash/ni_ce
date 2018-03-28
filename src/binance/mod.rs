@@ -10,6 +10,7 @@ use serde::de::DeserializeOwned;
 use sha2::Sha256;
 use std::fmt::{self, Display, Formatter};
 use http;
+use std::str::FromStr;
 
 /// Use this as the `host` for REST requests.
 pub const API_HOST: &str = "https://api.binance.com";
@@ -229,12 +230,19 @@ impl Display for TimeInForce {
 }
 
 /// A single currency. `ETH`, `BTC`, `USDT`, etc.
+///
+/// Use `Currency::from_str` to create a new `Currency`.
+///
+/// ```rust
+/// let bitcoin: Currency = "BTC".parse()?;
+/// ```
 #[derive(Debug, Serialize, Deserialize, PartialEq, Eq, PartialOrd, Ord, Hash, Clone)]
 pub struct Currency(String);
 
-impl Currency {
-    pub fn from_str(string: &str) -> Self {
-        Currency(string.to_uppercase())
+impl FromStr for Currency {
+    type Err = Error;
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        Ok(Currency(s.to_uppercase()))
     }
 }
 
