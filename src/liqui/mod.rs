@@ -451,8 +451,11 @@ where
     deserialize_private_response(&http_response)
 }
 
+/// Response to a private, authenticated request.
+///
+/// As far as I can tell, `PrivateResponse` is ALWAYS returned from the server in all cases.
 #[derive(Debug, Hash, PartialEq, PartialOrd, Eq, Ord, Clone, Deserialize, Serialize)]
-struct LiquiResponse<T> {
+struct PrivateResponse<T> {
     success: i32,
     #[serde(rename = "return")]
     ok: Option<T>,
@@ -460,7 +463,7 @@ struct LiquiResponse<T> {
     code: Option<u32>,
 }
 
-impl<T> LiquiResponse<T> {
+impl<T> PrivateResponse<T> {
     pub fn is_ok(&self) -> bool {
         self.success == 1
     }
@@ -506,7 +509,7 @@ enum LiquiError {
 fn deserialize_private_response<T>(response: &http::Response<String>) -> Result<T, Error>
 where T: DeserializeOwned {
     let body = response.body();
-    let response: LiquiResponse<T> = serde_json::from_str(body.as_str())
+    let response: PrivateResponse<T> = serde_json::from_str(body.as_str())
         .with_context(|_| format!("failed to deserialize: \"{}\"", body))?;
 
     response
@@ -514,11 +517,49 @@ where T: DeserializeOwned {
         .map_err(|e| format_err!("the server returned \"{}\"", e))
 }
 
+/// Response to a public request.
+///
+/// As far as I can tell, a public response is either:
+/// * `T` where `T` is the object being requested, or
+/// * `PublicResponse` in the event of an error.
+#[derive(Deserialize)]
+struct PublicResponse {
+    success: Option<i32>,
+    error: Option<String>,
+}
+
+impl PublicResponse {
+    fn is_ok(&self) -> bool {
+        // If `success` exists it means the response is an error. Also, if `success` exists, it's
+        // always equal to `0`.
+        match self.success {
+            Some(success) => success == 1,
+            None => true,
+        }
+    }
+
+    fn error(&self) -> &str {
+        match self.error {
+            Some(ref error) => error.as_str(),
+            None => "",
+        }
+    }
+}
+
 /// Deserialize a response from a *public* REST request.
 fn deserialize_public_response<T>(response: &http::Response<String>) -> Result<T, Error>
 where T: DeserializeOwned {
     let body = response.body();
-    let response = serde_json::from_str(body.as_str())
+
+    // First, deserialize into `PublicResponse`, to check if the response is an error.
+    let response: PublicResponse = serde_json::from_str(body.as_str())
+        .with_context(|_| format!("failed to deserialize: \"{}\"", body))?;
+    if !response.is_ok() {
+        return Err(format_err!("the server returned: \"{}\"", response.error()));
+    }
+
+    // Now, deserialize *again* into the expected reponse.
+    let response: T = serde_json::from_str(body.as_str())
         .with_context(|_| format!("failed to deserialize: \"{}\"", body))?;
     Ok(response)
 }
