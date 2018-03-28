@@ -523,21 +523,6 @@ where T: DeserializeOwned {
     Ok(response)
 }
 
-// fn private_headers(credential: &Credential, body: Option<&str>) -> Result<Headers, Error> {
-//     let mut mac =
-//         Hmac::<Sha512>::new(credential.secret.as_bytes()).map_err(|e| format_err!("{:?}", e))?;
-//     if let Some(body) = body {
-//         mac.input(body.as_bytes());
-//     }
-//     let signature = hex::encode(mac.result().code().to_vec());
-//
-//     let headers = vec![
-//         Header::new("Key", credential.key.clone()),
-//         Header::new("Sign", signature),
-//     ];
-//     Ok(headers)
-// }
-
 fn sign_private_request(
     credential: &Credential,
     request: &mut http::Request<String>,
