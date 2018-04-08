@@ -24,3 +24,4 @@ use _http::Query;
 
 pub mod liqui;
 pub mod binance;
+pub mod exmo;
